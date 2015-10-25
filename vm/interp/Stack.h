@@ -106,7 +106,7 @@ possible to push additional call frames on without calling a method.
 */
 
 #ifdef WITH_JIT
-#include "vm/compiler/StackExtension.h"
+#include "compiler/StackExtension.h"
 #endif
 
 //#define PAD_SAVE_AREA       /* help debug stack trampling */

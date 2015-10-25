@@ -132,7 +132,7 @@ static bool dvmCompilerPcgTranslateInsn (CompilationUnitPCG *cUnit, MIR *mir)
                 break;
 
             default:
-                LOGE ("Jit (PCG): unsupported extended MIR opcode");
+                ALOGE ("Jit (PCG): unsupported extended MIR opcode");
                 assert (0);
                 break;
         }
@@ -836,7 +836,7 @@ static bool dvmCompilerPcgTranslateInsn (CompilationUnitPCG *cUnit, MIR *mir)
         default:
             ALOGI ("XXXXXXXXXXXXXX Insn: %s (%d)\n",
                     dvmCompilerGetOpcodeName (dalvikOpCode), dalvikOpCode);
-            LOGE ("Jit (PCG): unsupported MIR opcode");
+            ALOGE ("Jit (PCG): unsupported MIR opcode");
             assert (0);
             cUnit->errorHandler->setError (kJitErrorUnsupportedBytecode);
     }

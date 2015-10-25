@@ -44,7 +44,7 @@ PCG_C_INCLUDES := \
     dalvik/vm/compiler/codegen/x86 \
     dalvik/vm/compiler/codegen/x86/lightcg \
     dalvik/vm/compiler/codegen/x86/lightcg/libenc \
-    vendor/intel/pcg
+    $(TARGET_OUT_HEADERS)/pcg
 
 PCG_C_INCLUDES_TARGET := \
     $(PCG_C_INCLUDES) \
