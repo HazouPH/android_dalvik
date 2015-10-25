@@ -95,7 +95,7 @@ static void visitThreadStack(RootVisitor *visitor, Thread *thread, void *arg)
         if (method != NULL && !dvmIsNativeMethod(method)) {
             const RegisterMap* pMap = dvmGetExpandedRegisterMap(method);
             const u1* regVector = NULL;
-            if (pMap != NULL) {
+            if (gDvm.preciseGc && pMap != NULL) {
                 /* found map, get registers for this address */
                 int addr = saveArea->xtra.currentPc - method->insns;
                 regVector = dvmRegisterMapGetLine(pMap, addr);

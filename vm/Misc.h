@@ -147,6 +147,14 @@ char* dvmDotToSlash(const char* str);
  */
 std::string dvmHumanReadableDescriptor(const char* descriptor);
 
+/*
+ * Fills 'dst' with a human-readable equivalent
+ * of 'descriptor'. So "I" would be "int", "[[I" would be "int[][]",
+ * "[Ljava/lang/String;" would be "java.lang.String[]", and so forth.
+ * The length of 'dst' is limmited by 'lenMax'.
+ */
+void dvmHumanReadableDescriptor(const char* descriptor, char *dst, int lenMax);
+
 /**
  * Returns a human-readable string form of the name of the class of
  * the given object. So given a java.lang.String, the output would
@@ -167,6 +175,13 @@ std::string dvmHumanReadableField(const Field* field);
  */
 struct Method;
 std::string dvmHumanReadableMethod(const Method* method, bool withSignature);
+
+/**
+ * Fills 'dst' with a human-readable string of the form "package.Class.methodName"
+ * or "package.Class.methodName(Ljava/lang/String;I)V". The length of 'dst'
+ *  is limmited by 'lenMax'.
+ */
+void dvmHumanReadableMethodWithOutSignature(const Method* method, char *dst, int lenMax);
 
 /*
  * Return a newly-allocated string for the "dot version" of the class

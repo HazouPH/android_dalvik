@@ -758,12 +758,6 @@ done:
             dvmThrowInterruptedException(NULL);
         }
     }
-#ifdef NDEBUG
-    // ret is used only in assert() statements ==> not used in
-    // NDEBUG builds at all, causing variable defined but not
-    // used warning, breaking the build with -Werror
-    (void)ret;
-#endif
 }
 
 /*
@@ -1229,7 +1223,7 @@ u4 dvmIdentityHashCode(Object *obj)
      * the shift preserves uniqueness of hashCode() while guaranteeing a
      * non-negative result (for the convenience of some applications,like MiTalk).
      */
-     return (u4)(((u4)obj)>>1);
+    return (u4)(((u4)obj)>>1);
 }
 #else
 /*

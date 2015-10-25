@@ -1,0 +1,8 @@
+This test does the comparison of "a" and "b" in the following cases:
+1.Higher 32 bits of a < Higher 32 bits of b
+2.Higher 32 bits of a > Higher 32 bits of b
+3.Lower 32 bits of a < Lower 32 bits of b
+4.a = b
+5.Lower 32 bits of a > Lower 32 bits of b
+
+Output : Prints to standard O/P stream only if expected value of "d" (20/21/22 for <,>,= respectively) is not found while comparison inside the for loops.

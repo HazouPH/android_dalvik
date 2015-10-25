@@ -127,17 +127,14 @@ static bool initClassReferences() {
         { &gDvm.classJavaLangReflectMethod,             "Ljava/lang/reflect/Method;" },
         { &gDvm.classJavaLangReflectMethodArray,        "[Ljava/lang/reflect/Method;"},
         { &gDvm.classJavaLangReflectProxy,              "Ljava/lang/reflect/Proxy;" },
-        { &gDvm.classJavaNioReadWriteDirectByteBuffer,  "Ljava/nio/ReadWriteDirectByteBuffer;" },
-        { &gDvm.classOrgApacheHarmonyDalvikDdmcChunk,
-          "Lorg/apache/harmony/dalvik/ddmc/Chunk;" },
+        { &gDvm.classJavaLangSystem,                    "Ljava/lang/System;" },
+        { &gDvm.classJavaNioDirectByteBuffer,           "Ljava/nio/DirectByteBuffer;" },
+        { &gDvm.classOrgApacheHarmonyDalvikDdmcChunk,   "Lorg/apache/harmony/dalvik/ddmc/Chunk;" },
         { &gDvm.classOrgApacheHarmonyDalvikDdmcDdmServer,
           "Lorg/apache/harmony/dalvik/ddmc/DdmServer;" },
-        { &gDvm.classOrgApacheHarmonyLangAnnotationAnnotationFactory,
-          "Lorg/apache/harmony/lang/annotation/AnnotationFactory;" },
-        { &gDvm.classOrgApacheHarmonyLangAnnotationAnnotationMember,
-          "Lorg/apache/harmony/lang/annotation/AnnotationMember;" },
-        { &gDvm.classOrgApacheHarmonyLangAnnotationAnnotationMemberArray,
-          "[Lorg/apache/harmony/lang/annotation/AnnotationMember;" },
+        { &gDvm.classLibcoreReflectAnnotationFactory,     "Llibcore/reflect/AnnotationFactory;" },
+        { &gDvm.classLibcoreReflectAnnotationMember,      "Llibcore/reflect/AnnotationMember;" },
+        { &gDvm.classLibcoreReflectAnnotationMemberArray, "[Llibcore/reflect/AnnotationMember;" },
 
         { NULL, NULL }
     };
@@ -251,7 +248,7 @@ static bool initFieldOffsets() {
 
     static struct FieldInfo infoBuffer[] = {
         { &gDvm.offJavaNioBuffer_capacity,               "capacity",               "I" },
-        { &gDvm.offJavaNioBuffer_effectiveDirectAddress, "effectiveDirectAddress", "I" },
+        { &gDvm.offJavaNioBuffer_effectiveDirectAddress, "effectiveDirectAddress", "J" },
         { NULL, NULL, NULL }
     };
 
@@ -325,16 +322,16 @@ static bool initConstructorReferences() {
         { &gDvm.methJavaLangStackTraceElement_init, "Ljava/lang/StackTraceElement;",
           "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V" },
         { &gDvm.methJavaLangReflectConstructor_init, "Ljava/lang/reflect/Constructor;",
-          "(Ljava/lang/Class;[Ljava/lang/Class;[Ljava/lang/Class;I)V" },
+          "(Ljava/lang/Class;[Ljava/lang/Class;[Ljava/lang/Class;II)V" },
         { &gDvm.methJavaLangReflectField_init, "Ljava/lang/reflect/Field;",
-          "(Ljava/lang/Class;Ljava/lang/Class;Ljava/lang/String;I)V" },
+          "(Ljava/lang/Class;Ljava/lang/Class;Ljava/lang/String;II)V" },
         { &gDvm.methJavaLangReflectMethod_init, "Ljava/lang/reflect/Method;",
           "(Ljava/lang/Class;[Ljava/lang/Class;[Ljava/lang/Class;Ljava/lang/Class;"
-          "Ljava/lang/String;I)V" },
-        { &gDvm.methJavaNioReadWriteDirectByteBuffer_init, "Ljava/nio/ReadWriteDirectByteBuffer;",
-          "(II)V" },
+          "Ljava/lang/String;II)V" },
+        { &gDvm.methJavaNioDirectByteBuffer_init, "Ljava/nio/DirectByteBuffer;",
+          "(JI)V" },
         { &gDvm.methOrgApacheHarmonyLangAnnotationAnnotationMember_init,
-          "Lorg/apache/harmony/lang/annotation/AnnotationMember;",
+          "Llibcore/reflect/AnnotationMember;",
           "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/reflect/Method;)V" },
         { NULL, NULL, NULL }
     };
@@ -361,11 +358,14 @@ static bool initDirectMethodReferences() {
           "getSystemClassLoader", "()Ljava/lang/ClassLoader;" },
         { &gDvm.methJavaLangReflectProxy_constructorPrototype, "Ljava/lang/reflect/Proxy;",
           "constructorPrototype", "(Ljava/lang/reflect/InvocationHandler;)V" },
+        { &gDvm.methJavaLangSystem_runFinalization, "Ljava/lang/System;",
+          "runFinalization", "()V" },
+
         { &gDvm.methodTraceGcMethod, "Ldalvik/system/VMDebug;", "startGC", "()V" },
         { &gDvm.methodTraceClassPrepMethod, "Ldalvik/system/VMDebug;", "startClassPrep", "()V" },
         { &gDvm.methOrgApacheHarmonyLangAnnotationAnnotationFactory_createAnnotation,
-          "Lorg/apache/harmony/lang/annotation/AnnotationFactory;", "createAnnotation",
-          "(Ljava/lang/Class;[Lorg/apache/harmony/lang/annotation/AnnotationMember;)"
+          "Llibcore/reflect/AnnotationFactory;", "createAnnotation",
+          "(Ljava/lang/Class;[Llibcore/reflect/AnnotationMember;)"
           "Ljava/lang/annotation/Annotation;" },
         { &gDvm.methDalvikSystemNativeStart_main, "Ldalvik/system/NativeStart;", "main", "([Ljava/lang/String;)V" },
         { &gDvm.methDalvikSystemNativeStart_run, "Ldalvik/system/NativeStart;", "run", "()V" },

@@ -37,6 +37,7 @@ bool dvmInitReferenceTable(ReferenceTable* pRef, int initialCount,
     pRef->nextEntry = pRef->table;
     pRef->allocEntries = initialCount;
     pRef->maxEntries = maxCount;
+    pRef->tableOverflow = false;
 
     return true;
 }
@@ -49,6 +50,7 @@ void dvmClearReferenceTable(ReferenceTable* pRef)
     free(pRef->table);
     pRef->table = pRef->nextEntry = NULL;
     pRef->allocEntries = pRef->maxEntries = -1;
+    pRef->tableOverflow = false;
 }
 
 /*
@@ -56,18 +58,42 @@ void dvmClearReferenceTable(ReferenceTable* pRef)
  */
 bool dvmAddToReferenceTable(ReferenceTable* pRef, Object* obj)
 {
+    /*
+      The Reference Table should have at least one guarded slot for the
+      thread object being dumped. Such guarded slot is implemented on
+      additional table's flag 'tableOveflow'. We set this flag when there
+      is only one slot left. So, we still can write something to
+      Reference Table at next time.
+    */
+
     assert(obj != NULL);
     assert(dvmIsHeapAddress(obj));
     assert(pRef->table != NULL);
     assert(pRef->allocEntries <= pRef->maxEntries);
 
-    if (pRef->nextEntry == pRef->table + pRef->allocEntries) {
-        /* reached end of allocated space; did we hit buffer max? */
-        if (pRef->nextEntry == pRef->table + pRef->maxEntries) {
-            ALOGW("ReferenceTable overflow (max=%d)", pRef->maxEntries);
+    Object** guardedEntry = pRef->table + pRef->allocEntries - 1;
+
+    if (pRef->tableOverflow == true)
+    {
+        ALOGW("ReferenceTable overflow (max=%d)", pRef->maxEntries);
+
+        /* when we've overflowed, we can write only in guarded slot */
+        if (pRef->nextEntry != guardedEntry)
+        {
             return false;
         }
-
+        /* we can use guarded slot */
+        LOGVV("Writing %p to guarded slot %p", pRef, guardedEntry);
+    }
+    else if (pRef->nextEntry == guardedEntry && pRef->allocEntries == pRef->maxEntries)
+    {
+        /* we reached the guarded entry as well as the maximim limit, so it's a strong overflow */
+        pRef->tableOverflow = true;
+        return false;
+    }
+    else if (pRef->nextEntry == pRef->table + pRef->allocEntries)
+    {
+        /* we can grow here, since we didn't overflow yet */
         Object** newTable;
         int newSize;
 
@@ -146,6 +172,9 @@ bool dvmRemoveFromReferenceTable(ReferenceTable* pRef, Object** bottom,
         /* last entry, falls off the end */
         //ALOGV("LREF delete %p from end", obj);
     }
+
+    /* since we removed one entry, we can't be overflowed no more */
+    pRef->tableOverflow = false;
 
     return true;
 }

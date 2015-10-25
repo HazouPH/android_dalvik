@@ -30,12 +30,12 @@ dex_src_files := \
 	InstrUtils.cpp \
 	Leb128.cpp \
 	OptInvocation.cpp \
+	sha1.cpp \
 	SysUtil.cpp \
 	ZipArchive.cpp
 
 dex_include_files := \
 	dalvik \
-	$(JNI_H_INCLUDE) \
 	external/zlib \
 	external/safe-iop/include
 
@@ -48,12 +48,9 @@ ifneq ($(SDK_ONLY),true)  # SDK_only doesn't need device version
 
 include $(CLEAR_VARS)
 #LOCAL_CFLAGS += -UNDEBUG -DDEBUG=1
-ifneq ($(findstring -O3, $(TARGET_GLOBAL_CFLAGS)),)
-# Workaround for https://bugs.launchpad.net/linaro-android/+bug/948255
-LOCAL_CFLAGS += -fno-inline-functions
-endif
 LOCAL_SRC_FILES := $(dex_src_files)
 LOCAL_C_INCLUDES += $(dex_include_files)
+LOCAL_STATIC_LIBRARIES := liblog
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := libdex
 include $(BUILD_STATIC_LIBRARY)
@@ -67,8 +64,9 @@ endif # !SDK_ONLY
 ##
 ##
 include $(CLEAR_VARS)
-LOCAL_SRC_FILES := $(dex_src_files) sha1.cpp
+LOCAL_SRC_FILES := $(dex_src_files)
 LOCAL_C_INCLUDES += $(dex_include_files)
+LOCAL_STATIC_LIBRARIES := liblog
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := libdex
 include $(BUILD_HOST_STATIC_LIBRARY)

@@ -45,7 +45,7 @@ static bool genArithOpDoublePortable(CompilationUnit *cUnit, MIR *mir,
 
 static bool genConversionPortable(CompilationUnit *cUnit, MIR *mir);
 
-#if defined(__ARM_ARCH_5__) || defined(__ARM_ARCH_6__)
+#if defined(__ARM_ARCH_5__)
 static void genMonitorPortable(CompilationUnit *cUnit, MIR *mir);
 #endif
 

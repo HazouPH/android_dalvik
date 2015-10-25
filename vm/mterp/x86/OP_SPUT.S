@@ -2,6 +2,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"store":"movl"}
     /*
      * General 32-bit SPUT handler.
      *
@@ -25,7 +26,7 @@
     GET_VREG_R  rINST rINST
     FETCH_INST_OPCODE 2 %ecx
     ADVANCE_PC 2
-    movl      rINST,offStaticField_value(%eax)
+    $store      rINST,offStaticField_value(%eax)   # do the store
     GOTO_NEXT_R %ecx
 
     /*

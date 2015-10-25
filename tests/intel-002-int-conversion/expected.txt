@@ -1,0 +1,2 @@
+Byte: Sum over entire range is 0
+Short: Sum over entire range is 0

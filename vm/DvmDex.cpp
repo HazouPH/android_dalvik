@@ -56,7 +56,7 @@ static DvmDex* allocateAuxStructures(DexFile* pDexFile)
 
     u1 *blob = (u1 *)dvmAllocRegion(totalSize,
                               PROT_READ | PROT_WRITE, "dalvik-aux-structure");
-    if ((void *)blob == MAP_FAILED)
+    if (blob == NULL)
         return NULL;
 
     pDvmDex = (DvmDex*)blob;
@@ -78,6 +78,8 @@ static DvmDex* allocateAuxStructures(DexFile* pDexFile)
         stringSize + classSize + methodSize + fieldSize);
 
     pDvmDex->pInterfaceCache = dvmAllocAtomicCache(DEX_INTERFACE_CACHE_SIZE);
+
+    dvmInitMutex(&pDvmDex->modLock);
 
     return pDvmDex;
 }
@@ -183,6 +185,8 @@ void dvmDexFileFree(DvmDex* pDvmDex)
 
     if (pDvmDex == NULL)
         return;
+
+    dvmDestroyMutex(&pDvmDex->modLock);
 
     totalSize  = pDvmDex->pHeader->stringIdsSize * sizeof(struct StringObject*);
     totalSize += pDvmDex->pHeader->typeIdsSize * sizeof(struct ClassObject*);

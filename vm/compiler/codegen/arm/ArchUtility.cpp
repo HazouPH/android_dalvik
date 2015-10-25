@@ -436,3 +436,21 @@ void dvmCompilerCacheClear(char *start, size_t size)
 
     memset(start, 0xde, size);
 }
+
+unsigned int dvmArchSpecGetNumberOfScratch (void)
+{
+    //Non-x86 don't have scratch registers in their frames
+    return 0;
+}
+
+int dvmArchSpecGetPureLocalScratchRegister (const Method * method, unsigned int idx, int registerWindowShift)
+{
+    //Non-x86 don't have scratch registers in their frames
+    return -1;
+}
+
+bool dvmArchIsPureLocalScratchRegister (const Method * method, int virtualReg, int registerWindowShift)
+{
+    //Non-x86 don't support scratch registers and therefore no VR is scratch
+    return false;
+}

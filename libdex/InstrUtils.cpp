@@ -676,3 +676,57 @@ size_t dexGetWidthFromInstruction(const u2* insns)
 
     return width;
 }
+
+/**
+ * @brief Given a decoded instruction, it checks whether the instruction
+ * sets a constant and if it does, more information is provided about the
+ * constant being set.
+ * @param decInsn The input decoded instruction.
+ * @param lowConst Updated by function to represent the lower 32 bits of
+ * the constant being set.
+ * @param highConst Updated by function to represent the higher 32 bits
+ * of the constant being set.
+ * @param wide Updated by function whether a wide constant is being set by
+ * bytecode.
+ * @return Returns false if the decoded instruction does not represent a
+ * constant bytecode.
+ */
+bool dexGetConstant (const DecodedInstruction &dInsn, int &lowConst,
+        int &highConst, bool &wide)
+{
+    bool setsConst = true;
+
+    switch (dInsn.opcode) {
+        case OP_CONST_4:
+        case OP_CONST_16:
+        case OP_CONST:
+            wide = false;
+            lowConst = dInsn.vB;
+            break;
+        case OP_CONST_HIGH16:
+            wide = false;
+            lowConst = dInsn.vB << 16;
+            break;
+        case OP_CONST_WIDE_16:
+        case OP_CONST_WIDE_32:
+            wide = true;
+            lowConst = dInsn.vB;
+            highConst = 0;
+            break;
+        case OP_CONST_WIDE:
+            wide = true;
+            lowConst = (int) dInsn.vB_wide;
+            highConst = (int) (dInsn.vB_wide >> 32);
+            break;
+        case OP_CONST_WIDE_HIGH16:
+            wide = true;
+            lowConst = 0;
+            highConst = dInsn.vB << 16;
+            break;
+        default:
+            setsConst = false;
+            break;
+    }
+
+    return setsConst;
+}

@@ -42,6 +42,7 @@ struct ReferenceTable {
 
     int             allocEntries;       /* #of entries we have space for */
     int             maxEntries;         /* max #of entries allowed */
+    bool            tableOverflow;      /* whether the table overflow or not */
 };
 
 /*

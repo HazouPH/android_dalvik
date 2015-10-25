@@ -119,14 +119,14 @@ static hprof_basic_type primitiveToBasicTypeAndSize(PrimitiveType prim,
  * only true when marking the root set or unreachable
  * objects.  Used to add rootset references to obj.
  */
-int hprofMarkRootObject(hprof_context_t *ctx, const Object *obj, jobject jniObj)
+void hprofMarkRootObject(hprof_context_t *ctx, const Object *obj,
+                         jobject jniObj)
 {
     hprof_record_t *rec = &ctx->curRec;
-    int err;
     hprof_heap_tag_t heapTag = (hprof_heap_tag_t)ctx->gcScanState;
 
     if (heapTag == 0) {
-        return 0;
+        return;
     }
 
     if (ctx->objectsInSegment >= OBJECTS_PER_SEGMENT ||
@@ -197,13 +197,10 @@ int hprofMarkRootObject(hprof_context_t *ctx, const Object *obj, jobject jniObj)
         break;
 
     default:
-        err = 0;
         break;
     }
 
     ctx->objectsInSegment++;
-
-    return err;
 }
 
 static int stackTraceSerialNumber(const void *obj)
@@ -259,11 +256,21 @@ int hprofDumpHeapObject(hprof_context_t *ctx, const Object *obj)
 
     clazz = obj->clazz;
 
-    if (clazz == NULL) {
-        /* This object will bother HprofReader, because it has a NULL
-         * class, so just don't dump it. It could be
-         * gDvm.unlinkedJavaLangClass or it could be an object just
-         * allocated which hasn't been initialized yet.
+    if (clazz == NULL ||
+        (dvmIsClassObject(obj) && ((ClassObject *) obj)->descriptor == NULL))
+    {
+        /* There are two dangerous cases when this object will bother
+         * HprofReader. First, it has a NULL class. Second, it is a
+         * ClassObject and it has a NULL descriptor. The reasons for
+         * such cases listed bellow:
+         *
+         *   1. A NULL class: It could be gDvm.unlinkedJavaLangClass or
+         *      it could be an object just allocated which hasn't been
+         *      initialized yet.
+         *
+         *   2. A NULL descriptor in ClassObject: It could be freed by
+         *      dvmFreeClassInnards() due to linkage error or other
+         *      reasons.
          */
     } else {
         if (dvmIsClassObject(obj)) {

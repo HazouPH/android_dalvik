@@ -1,0 +1,7 @@
+This test does the comparison of "a" and "b" of type 'double' in the following cases:
+1.a < b
+2.a = b
+3.a > b
+4.a is NaN
+5.b is NaN
+Output : Prints error message to standard O/P stream if expected value of "d" (20/21/22/23 for <,>,=,NaN respectively)is not found while comparison inside the for loops, else it will print the values of c1, c2, c3, c4 and c5 as in expected.txt

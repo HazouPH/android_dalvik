@@ -38,6 +38,11 @@
 
 //#define REGISTER_MAP_STATS
 
+/* size of register map is limited by 4Mb */
+#define REGISTER_MAP_MAX_SIZE 4 * 1024 * 1024
+/* but last bytes are not used to prevent overrun */
+#define REGISTER_MAP_OVER_LIMIT 8 * 1024
+
 // fwd
 static void outputTypeVector(const RegType* regs, int insnRegCount, u1* data);
 static bool verifyMap(VerifierData* vdata, const RegisterMap* pMap);
@@ -226,8 +231,13 @@ RegisterMap* dvmGenerateRegisterMapV(VerifierData* vdata)
      */
     gcPointCount = 0;
     for (i = 0; i < (int) vdata->insnsSize; i++) {
-        if (dvmInsnIsGcPoint(vdata->insnFlags, i))
+        if (dvmInsnIsGcPoint(vdata->insnFlags, i)) {
+            if (i >= 65536) {
+                ALOGE("ERROR: register map can't handle %d instructions in one method", i);
+                goto bail;
+            }
             gcPointCount++;
+        }
     }
     if (gcPointCount >= 65536) {
         /* we could handle this, but in practice we don't get near this */
@@ -508,6 +518,8 @@ static bool verifyMap(VerifierData* vdata, const RegisterMap* pMap)
             /* shouldn't happen */
             ALOGE("GLITCH: bad format (%d)", format);
             dvmAbort();
+            /* Make compiler happy */
+            addr = 0;
         }
 
         const RegType* regs = vdata->registerLines[addr].regTypes;
@@ -760,12 +772,10 @@ static size_t writeMapsAllClasses(DvmDex* pDvmDex, u1* basePtr, size_t length)
             ALOGV("%4d NOT mapadding '%s'", idx, classDescriptor);
             assert(offsetTable[idx] == 0);
         }
-    }
-
-    if (ptr - basePtr >= (int)length) {
-        /* a bit late */
-        ALOGE("Buffer overrun");
-        dvmAbort();
+        if (ptr - basePtr >= (int)length) {
+            ALOGE("Register map buffer overrun");
+            dvmAbort();
+        }
     }
 
     return ptr - basePtr;
@@ -798,7 +808,7 @@ RegisterMapBuilder* dvmGenerateRegisterMaps(DvmDex* pDvmDex)
      * page of the mapping is marked invalid, so we reliably fail if
      * we overrun.)
      */
-    if (sysCreatePrivateMap(4 * 1024 * 1024, &pBuilder->memMap) != 0) {
+    if (sysCreatePrivateMap(REGISTER_MAP_MAX_SIZE, &pBuilder->memMap) != 0) {
         free(pBuilder);
         return NULL;
     }
@@ -807,7 +817,7 @@ RegisterMapBuilder* dvmGenerateRegisterMaps(DvmDex* pDvmDex)
      * Create the maps.
      */
     size_t actual = writeMapsAllClasses(pDvmDex, (u1*)pBuilder->memMap.addr,
-                                        pBuilder->memMap.length);
+                                        pBuilder->memMap.length - REGISTER_MAP_OVER_LIMIT);
     if (actual == 0) {
         dvmFreeRegisterMapBuilder(pBuilder);
         return NULL;

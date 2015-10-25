@@ -1,4 +1,4 @@
-%default { "sqnum":"0" }
+%default { "sqnum":"0", "store":"movl" }
 %verify "executed"
 %verify "null object"
 %verify "field already resolved"
@@ -47,11 +47,15 @@
     movl    offInstField_byteOffset(%eax),%eax  # eax<- byte offset of field
     testl   %ecx,%ecx                           # object null?
     je      common_errNullObject                # object was null
-    movl    rINST,(%ecx,%eax)      # obj.field <- v[A](8/16/32 bits)
-    movl    rSELF,%eax
     testl   rINST,rINST                         # stored a NULL?
-    movl    offThread_cardTable(%eax),%eax      # get card table base
+    $store   rINST,(%ecx,%eax)                    # obj.field <- v[A](8/16/32 bits)
     je      1f                                  # skip card mark if null store
+    movl    rSELF,%eax
+#if defined(WITH_CONDMARK)
+    cmpl    %ecx,offThread_cardImmuneLimit(%eax)
+    jbe     1f
+#endif
+    movl    offThread_cardTable(%eax),%eax      # get card table base
     shrl    $$GC_CARD_SHIFT,%ecx                # object head to card number
     movb    %al,(%eax,%ecx)                     # mark card using object head
 1:

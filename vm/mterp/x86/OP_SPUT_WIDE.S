@@ -2,6 +2,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"volatile":"0"}
     /*
      * General 32-bit SPUT handler.
      *
@@ -24,9 +25,19 @@
 .L${opcode}_finish:     # field ptr in eax
     GET_VREG_WORD %ecx rINST 0                  # rINST<- lsw
     GET_VREG_WORD rINST rINST 1                 # ecx<- msw
+    .if $volatile
+    SPILL(rIBASE)
+    lea offStaticField_value(%eax), rIBASE
+    movl rIBASE, OUT_ARG2(%esp)
+    movl rINST, OUT_ARG1(%esp)
+    movl %ecx, OUT_ARG0(%esp)
+    call dvmQuasiAtomicSwap64Sync
+    UNSPILL(rIBASE)
+    .else
     movl      %ecx,offStaticField_value(%eax)
-    FETCH_INST_OPCODE 2 %ecx
     movl      rINST,4+offStaticField_value(%eax)
+    .endif
+    FETCH_INST_OPCODE 2 %ecx
     ADVANCE_PC 2
     GOTO_NEXT_R %ecx
 

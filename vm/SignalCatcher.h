@@ -22,4 +22,11 @@
 bool dvmSignalCatcherStartup(void);
 void dvmSignalCatcherShutdown(void);
 
+/*
+ * Set the current signal handler to ignore
+ * fatal signals.  This can be used during
+ * VM shutdown stage
+ */
+void dvmIgnoreSignalsOnVMExit(void);
+
 #endif  // DALVIK_SIGNALCATCHER_H_

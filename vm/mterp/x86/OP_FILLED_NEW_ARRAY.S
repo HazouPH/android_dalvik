@@ -108,7 +108,11 @@
     cmpb    $$'I',%al                        # Int array?
     je      5f                               # skip card mark if so
     movl    offThread_retval(%ecx),%eax        # eax<- object head
-    movl    offThread_cardTable(%ecx),%ecx     # card table base
+#if defined(WITH_CONDMARK)
+    cmpl    %eax,offThread_cardImmuneLimit(%ecx)
+    jbe     5f
+#endif
+    movl    offThread_cardTable(%ecx),%ecx   # card table base
     shrl    $$GC_CARD_SHIFT,%eax             # convert to card num
     movb    %cl,(%ecx,%eax)                  # mark card based on object head
 5:

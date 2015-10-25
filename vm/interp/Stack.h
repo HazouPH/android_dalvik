@@ -105,8 +105,9 @@ for a discussion of how this is managed.  In particular note that it is
 possible to push additional call frames on without calling a method.
 */
 
-
-struct StackSaveArea;
+#ifdef WITH_JIT
+#include "vm/compiler/StackExtension.h"
+#endif
 
 //#define PAD_SAVE_AREA       /* help debug stack trampling */
 
@@ -120,6 +121,16 @@ struct StackSaveArea;
 struct StackSaveArea {
 #ifdef PAD_SAVE_AREA
     u4          pad0, pad1, pad2;
+#endif
+
+#if defined(WITH_JIT) && defined(ARCH_IA32) && defined(EXTRA_SCRATCH_VR)
+    /*
+     * In case the JIT needs it, we allow it to extend the save area.
+     * Additionally, we guard with so many flags because if the arch
+     * specific extension might be empty, it will still have size of 1 and
+     * we don't want it to change size of StackSaveArea.
+     */
+    ArchSpecificStackExtension saveAreaExtension;
 #endif
 
 #ifdef EASY_GDB
@@ -147,6 +158,7 @@ struct StackSaveArea {
 
     /* Native return pointer for JIT, or 0 if interpreted */
     const u2* returnAddr;
+
 #ifdef PAD_SAVE_AREA
     u4          pad3, pad4, pad5;
 #endif

@@ -36,6 +36,7 @@ extern "C" bool dvmCheckAsmConstants(void);
  * Local entry and exit points.  The platform-specific implementation must
  * provide these two.
  */
+
 extern "C" void dvmMterpStdRun(Thread* self);
 extern "C" void dvmMterpStdBail(Thread* self);
 

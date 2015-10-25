@@ -27,7 +27,7 @@ JitInstructionSetType dvmCompilerInstructionSet(void)
 
 /* First, declare dvmCompiler_TEMPLATE_XXX for each template */
 #define JIT_TEMPLATE(X) extern "C" void dvmCompiler_TEMPLATE_##X();
-#include "../../../template/armv5te-vfp/TemplateOpList.h"
+#include "../../../template/armv7-a-neon/TemplateOpList.h"
 #undef JIT_TEMPLATE
 
 /* Architecture-specific initializations and checks go here */
@@ -41,14 +41,22 @@ bool dvmCompilerArchVariantInit(void)
      */
 #define JIT_TEMPLATE(X) templateEntryOffsets[i++] = \
     (intptr_t) dvmCompiler_TEMPLATE_##X - (intptr_t) dvmCompilerTemplateStart;
-#include "../../../template/armv5te-vfp/TemplateOpList.h"
+#include "../../../template/armv7-a-neon/TemplateOpList.h"
 #undef JIT_TEMPLATE
 
     /* Target-specific configuration */
     gDvmJit.jitTableSize = 1 << 12; // 4096
     gDvmJit.jitTableMask = gDvmJit.jitTableSize - 1;
-    gDvmJit.threshold = 40;
-    gDvmJit.codeCacheSize = 1024*1024;
+    if (gDvmJit.threshold == 0) {
+        gDvmJit.threshold = 40;
+    }
+    if (gDvmJit.codeCacheSize == DEFAULT_CODE_CACHE_SIZE) {
+      gDvmJit.codeCacheSize = 1500 * 1024;
+    } else if ((gDvmJit.codeCacheSize == 0) && (gDvm.executionMode == kExecutionModeJit)) {
+      gDvm.executionMode = kExecutionModeInterpFast;
+    }
+    /* Hard limit for Arm of 2M */
+    assert(gDvmJit.codeCacheSize <= 2 * 1024 * 1024);
 
 #if defined(WITH_SELF_VERIFICATION)
     /* Force into blocking */

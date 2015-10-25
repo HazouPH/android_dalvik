@@ -82,10 +82,6 @@ enum ClassFlags {
     CLASS_ISPREVERIFIED        = (1<<16), // class has been pre-verified
 };
 
-/* bits we can reasonably expect to see set in a DEX access flags field */
-#define EXPECTED_FILE_FLAGS \
-    (ACC_CLASS_MASK | CLASS_ISPREVERIFIED | CLASS_ISOPTIMIZED)
-
 /*
  * Get/set class flags.
  */
@@ -107,6 +103,9 @@ enum ClassFlags {
  */
 enum MethodFlags {
     METHOD_ISWRITABLE       = (1<<31),  // the method's code is writable
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+    METHOD_PROFILE_MATCHED  = (1<<30),  // the method is matched in profile mode
+#endif
 };
 
 /*
@@ -274,6 +273,10 @@ struct ArrayObject : Object {
     /* number of elements; immutable after init */
     u4              length;
 
+#ifdef MTERP_NO_UNALIGN_64
+    u4              dummy;      /* padding to get 'contents' at offset 16 */
+#endif
+
     /*
      * Array contents; actual size is (length * sizeof(type)).  This is
      * declared as u8 so that the compiler inserts any necessary padding
@@ -305,6 +308,8 @@ struct Field {
     const char*     signature;      /* e.g. "I", "[C", "Landroid/os/Debug;" */
     u4              accessFlags;
 };
+
+u4 dvmGetFieldIdx(const Field* field);
 
 /*
  * Static field.
@@ -583,7 +588,14 @@ struct Method {
 #ifdef WITH_HOUDINI
     bool            needHoudini;
 #endif
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+    /* The execution counter of each bytecode */
+    int*            profileTable;
+#endif
 };
+
+u4 dvmGetMethodIdx(const Method* method);
 
 
 /*

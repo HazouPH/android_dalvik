@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#define ATRACE_TAG ATRACE_TAG_DALVIK
+
 /*
  * Thread support.
  */
@@ -27,12 +29,9 @@
 #include <sys/resource.h>
 #include <sys/mman.h>
 #include <signal.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-
-#ifdef HAVE_ANDROID_OS
-#include <dirent.h>
-#endif
 
 #if defined(HAVE_PRCTL)
 #include <sys/prctl.h>
@@ -42,6 +41,11 @@
 #include "interp/Jit.h"         // need for self verification
 #endif
 
+#ifdef WITH_TLA
+#include "alloc/ThreadLocalHeap.h"
+#endif
+
+#include <cutils/trace.h>
 
 /* desktop Linux needs a little help with gettid() */
 #if defined(HAVE_GETTID) && !defined(HAVE_ANDROID_OS)
@@ -296,6 +300,11 @@ bool dvmThreadStartup()
     prepareThread(thread);
     gDvm.threadList = thread;
 
+#ifdef WITH_TLA
+    dvmTLHeapAtttach(thread);
+#endif
+
+
 #ifdef COUNT_PRECISE_METHODS
     gDvm.preciseMethods = dvmPointerSetAlloc(200);
 #endif
@@ -390,8 +399,9 @@ void dvmLockThreadList(Thread* self)
 
     dvmLockMutex(&gDvm.threadListLock);
 
-    if (self != NULL)
-        self->status = oldStatus;
+    if (self != NULL) {
+        dvmChangeStatus(self, oldStatus, true);
+    }
 }
 
 /*
@@ -914,6 +924,12 @@ static bool prepareThread(Thread* thread)
     ALOGV("threadid=%d: interp stack at %p",
         thread->threadId, thread->interpStackStart - thread->interpStackSize);
 
+#ifdef WITH_CONDMARK
+    /*
+     *  Initlialize thread->cardImmuneLimit;
+     */
+    thread->cardImmuneLimit = gDvm.cardImmuneLimit;
+#endif
     /*
      * Initialize invokeReq.
      */
@@ -997,6 +1013,7 @@ static void freeThread(Thread* thread)
 #if defined(WITH_SELF_VERIFICATION)
     dvmSelfVerificationShadowSpaceFree(thread);
 #endif
+    free(thread->stackTraceSample);
     free(thread);
 }
 
@@ -1281,6 +1298,7 @@ bool dvmCreateInterpThread(Object* threadObj, int reqStackSize)
             "thread has already been started");
         freeThread(newThread);
         dvmReleaseTrackedAlloc(vmThreadObj, NULL);
+        return false;
     }
 
     /*
@@ -1311,11 +1329,13 @@ bool dvmCreateInterpThread(Object* threadObj, int reqStackSize)
          * resource limits.  VirtualMachineError is probably too severe,
          * so use OutOfMemoryError.
          */
-        ALOGE("Thread creation failed (err=%s)", strerror(errno));
 
         dvmSetFieldObject(threadObj, gDvm.offJavaLangThread_vmThread, NULL);
 
-        dvmThrowOutOfMemoryError("thread creation failed");
+        ALOGE("pthread_create (stack size %d bytes) failed: %s", stackSize, strerror(cc));
+        dvmThrowExceptionFmt(gDvm.exOutOfMemoryError,
+                             "pthread_create (stack size %d bytes) failed: %s",
+                             stackSize, strerror(cc));
         goto fail;
     }
 
@@ -1491,12 +1511,24 @@ static void* interpThreadStart(void* arg)
     while (self->status != THREAD_VMWAIT)
         pthread_cond_wait(&gDvm.threadStartCond, &gDvm.threadListLock);
 
+#ifdef WITH_CONDMARK
+    /*
+     *  cardImmuneLimit may have change before thread was added to the list,
+     *  so refresh it here before releasing the lock.
+     */
+    self->cardImmuneLimit = gDvm.cardImmuneLimit;
+#endif
+
     dvmUnlockThreadList();
 
     /*
      * Add a JNI context.
      */
     self->jniEnv = dvmCreateJNIEnv(self);
+
+#ifdef WITH_TLA
+    dvmTLHeapAtttach(self);
+#endif
 
     /*
      * Change our state so the GC will wait for us from now on.  If a GC is
@@ -1658,7 +1690,7 @@ bool dvmCreateInternalThread(pthread_t* pHandle, const char* name,
     int cc = pthread_create(pHandle, &threadAttr, internalThreadStart, pArgs);
     pthread_attr_destroy(&threadAttr);
     if (cc != 0) {
-        ALOGE("internal thread creation failed");
+        ALOGE("internal thread creation failed: %s", strerror(cc));
         free(pArgs->name);
         free(pArgs);
         return false;
@@ -1795,6 +1827,11 @@ bool dvmAttachCurrentThread(const JavaVMAttachArgs* pArgs, bool isDaemon)
         goto fail;
 
     self->jniEnv = dvmCreateJNIEnv(self);
+
+#ifdef WITH_TLA
+    dvmTLHeapAtttach(self);
+#endif
+
     if (self->jniEnv == NULL)
         goto fail;
 
@@ -1822,6 +1859,14 @@ bool dvmAttachCurrentThread(const JavaVMAttachArgs* pArgs, bool isDaemon)
     gDvm.threadList->next = self;
     if (!isDaemon)
         gDvm.nonDaemonThreadCount++;
+
+#ifdef WITH_CONDMARK
+    /*
+     *  cardImmuneLimit may have change before thread was added to the list,
+     *  so refresh it here before releasing the lock.
+     */
+    self->cardImmuneLimit = gDvm.cardImmuneLimit;
+#endif
 
     dvmUnlockThreadList();
 
@@ -2088,6 +2133,14 @@ void dvmDetachCurrentThread()
     dvmReleaseTrackedAlloc(vmThread, self);
     vmThread = NULL;
 
+#if WITH_TLA
+    /*
+     * Release Thread local heap resources
+     */
+    dvmTLHeapDetach(self);
+#endif
+
+
     /*
      * We're done manipulating objects, so it's okay if the GC runs in
      * parallel with us from here out.  It's important to do this if
@@ -2145,17 +2198,14 @@ void dvmDetachCurrentThread()
         gDvm.nonDaemonThreadCount--;        // guarded by thread list lock
 
         if (gDvm.nonDaemonThreadCount == 0) {
-            int cc;
-
             ALOGV("threadid=%d: last non-daemon thread", self->threadId);
             //dvmDumpAllThreads(false);
             // cond var guarded by threadListLock, which we already hold
-            cc = pthread_cond_signal(&gDvm.vmExitCond);
-            assert(cc == 0);
-#ifdef NDEBUG
-            // not used -> variable defined but not used warning
-            (void)cc;
-#endif
+            int cc = pthread_cond_signal(&gDvm.vmExitCond);
+            if (cc != 0) {
+                ALOGE("pthread_cond_signal(&gDvm.vmExitCond) failed: %s", strerror(cc));
+                dvmAbort();
+            }
         }
     }
 
@@ -2633,7 +2683,6 @@ void dvmResumeAllThreads(SuspendCause why)
 {
     Thread* self = dvmThreadSelf();
     Thread* thread;
-    int cc;
 
     lockThreadSuspend("res-all", why);  /* one suspend/resume at a time */
     LOG_THREAD("threadid=%d: ResumeAll starting", self->threadId);
@@ -2711,12 +2760,11 @@ void dvmResumeAllThreads(SuspendCause why)
      * which may choose to wake up.  No need to wait for them.
      */
     lockThreadSuspendCount();
-    cc = pthread_cond_broadcast(&gDvm.threadSuspendCountCond);
-    assert(cc == 0);
-#ifdef NDEBUG
-    // not used -> variable defined but not used warning
-    (void)cc;
-#endif
+    int cc = pthread_cond_broadcast(&gDvm.threadSuspendCountCond);
+    if (cc != 0) {
+        ALOGE("pthread_cond_broadcast(&gDvm.threadSuspendCountCond) failed: %s", strerror(cc));
+        dvmAbort();
+    }
     unlockThreadSuspendCount();
 
     LOG_THREAD("threadid=%d: ResumeAll complete", self->threadId);
@@ -2730,7 +2778,6 @@ void dvmUndoDebuggerSuspensions()
 {
     Thread* self = dvmThreadSelf();
     Thread* thread;
-    int cc;
 
     lockThreadSuspend("undo", SUSPEND_FOR_DEBUG);
     LOG_THREAD("threadid=%d: UndoDebuggerSusp starting", self->threadId);
@@ -2764,12 +2811,11 @@ void dvmUndoDebuggerSuspensions()
      * which may choose to wake up.  No need to wait for them.
      */
     lockThreadSuspendCount();
-    cc = pthread_cond_broadcast(&gDvm.threadSuspendCountCond);
-    assert(cc == 0);
-#ifdef NDEBUG
-    // not used -> variable defined but not used warning
-    (void)cc;
-#endif
+    int cc = pthread_cond_broadcast(&gDvm.threadSuspendCountCond);
+    if (cc != 0) {
+        ALOGE("pthread_cond_broadcast(&gDvm.threadSuspendCountCond) failed: %s", strerror(cc));
+        dvmAbort();
+    }
     unlockThreadSuspendCount();
 
     unlockThreadSuspend();
@@ -2845,7 +2891,7 @@ void dvmWaitForSuspend(Thread* thread)
  *
  * Returns "true" if we suspended ourselves.
  */
-static bool fullSuspendCheck(Thread* self)
+static bool fullSuspendCheck(Thread* self, bool releaseThreadListLock = false)
 {
     assert(self != NULL);
     assert(self->suspendCount >= 0);
@@ -2862,15 +2908,38 @@ static bool fullSuspendCheck(Thread* self)
         ThreadStatus oldStatus = self->status;      /* should be RUNNING */
         self->status = THREAD_SUSPENDED;
 
+        ATRACE_BEGIN("DVM Suspend");
         while (self->suspendCount != 0) {
             /*
              * Wait for wakeup signal, releasing lock.  The act of releasing
              * and re-acquiring the lock provides the memory barriers we
              * need for correct behavior on SMP.
              */
+
+            /*
+             * threadListLock has to be released in this function before
+             * thread self is suspended otherwise there will be a deadlock.
+             * When thread self is resumed, there might be a deadlock since
+             * threadSuspendCountLock gets locked before threadListLock (see
+             * Global.h for the correct order). We use dvmTryLockThreadList to
+             * solve this problem
+             */
+            if(releaseThreadListLock == true) {
+                dvmUnlockThreadList();
+            }
             dvmWaitCond(&gDvm.threadSuspendCountCond,
                     &gDvm.threadSuspendCountLock);
+            if(releaseThreadListLock == true && dvmTryLockThreadList() == false) {
+               /*
+                * If dvmTryLockThreadList failed, we have to release the locks already
+                * acquired and then try again in proper order
+                */
+               unlockThreadSuspendCount();
+               dvmLockMutex(&gDvm.threadListLock);
+               lockThreadSuspendCount();
+            }
         }
+        ATRACE_END();
         assert(self->suspendCount == 0 && self->dbgSuspendCount == 0);
         self->status = oldStatus;
         LOG_THREAD("threadid=%d: self-reviving, status=%d",
@@ -2900,10 +2969,12 @@ bool dvmCheckSuspendPending(Thread* self)
  * Update our status.
  *
  * The "self" argument, which may be NULL, is accepted as an optimization.
+ * The releaseThreadLock is false by default. It is true only when this is
+ * called from dvmLockThreadList.
  *
  * Returns the old status.
  */
-ThreadStatus dvmChangeStatus(Thread* self, ThreadStatus newStatus)
+ThreadStatus dvmChangeStatus(Thread* self, ThreadStatus newStatus, bool releaseThreadLock)
 {
     ThreadStatus oldStatus;
 
@@ -2972,7 +3043,7 @@ ThreadStatus dvmChangeStatus(Thread* self, ThreadStatus newStatus)
         volatile int32_t* addr = reinterpret_cast<volatile int32_t*>(raw);
         android_atomic_acquire_store(newStatus, addr);
         if (self->suspendCount != 0) {
-            fullSuspendCheck(self);
+            fullSuspendCheck(self, releaseThreadLock);
         }
     } else {
         /*
@@ -3288,13 +3359,23 @@ static bool shouldShowNativeStack(Thread* thread) {
         return false;
     }
 
+    // The Signal Catcher thread? That's not interesting.
+    if (thread->status == THREAD_RUNNING) {
+        return false;
+    }
+
     // In some other native method? That's interesting.
     // We don't just check THREAD_NATIVE because native methods will be in
     // state THREAD_SUSPENDED if they're calling back into the VM, or THREAD_MONITOR
     // if they're blocked on a monitor, or one of the thread-startup states if
     // it's early enough in their life cycle (http://b/7432159).
-    const Method* currentMethod = SAVEAREA_FROM_FP(thread->interpSave.curFrame)->method;
-    return dvmIsNativeMethod(currentMethod);
+    u4* fp = thread->interpSave.curFrame;
+    if (fp == NULL) {
+        // The thread has no managed frames, so native frames are all there is.
+        return true;
+    }
+    const Method* currentMethod = SAVEAREA_FROM_FP(fp)->method;
+    return currentMethod != NULL && dvmIsNativeMethod(currentMethod);
 }
 
 /*
@@ -3506,17 +3587,13 @@ void dvmDumpAllThreadsEx(const DebugOutputTarget* target, bool grabLock)
     }
 
 #ifdef HAVE_ANDROID_OS
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%d/task", getpid());
-
-    DIR* d = opendir(path);
-    if (d) {
-        dirent de;
-        dirent* result;
+    DIR* d = opendir("/proc/self/task");
+    if (d != NULL) {
+        dirent* entry = NULL;
         bool first = true;
-        while (!readdir_r(d, &de, &result) && result) {
+        while ((entry = readdir(d)) != NULL) {
             char* end;
-            pid_t tid = strtol(de.d_name, &end, 10);
+            pid_t tid = strtol(entry->d_name, &end, 10);
             if (!*end && !isDalvikThread(tid)) {
                 if (first) {
                     dvmPrintDebugMessage(target, "NATIVE THREADS:\n");
@@ -3595,7 +3672,7 @@ void dvmNukeThread(Thread* thread)
     ALOGD("Sent, pausing to let debuggerd run");
     usleep(8 * 1000 * 1000);    // TODO: timed-wait until debuggerd finishes
 
-    /* ignore SIGSEGV so the eventual dmvAbort() doesn't notify debuggerd */
+    /* ignore SIGSEGV so the eventual dvmAbort() doesn't notify debuggerd */
     signal(SIGSEGV, SIG_IGN);
     ALOGD("Continuing");
 }

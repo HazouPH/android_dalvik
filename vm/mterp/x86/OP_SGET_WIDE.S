@@ -2,6 +2,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"volatile":"0"}
     /*
      * 64-bit SGET handler.
      *
@@ -13,7 +14,7 @@
     movl      offDvmDex_pResFields(%ecx),%ecx    # ecx<- dvmDex->pResFields
 #if defined(WITH_JIT)
     movl      %ecx, TMP_SPILL1(%ebp)
-    lea       (%ecx,%eax,4),%ecx
+    leal       (%ecx,%eax,4),%ecx
     movl      %ecx, TMP_SPILL2(%ebp)
     movl      TMP_SPILL1(%ebp), %ecx
 #endif
@@ -21,8 +22,18 @@
     testl     %eax,%eax                          # resolved entry null?
     je        .L${opcode}_resolve                # if not, make it so
 .L${opcode}_finish:     # field ptr in eax
+    .if $volatile
+    leal  offStaticField_value(%eax), %eax
+    movl %eax, OUT_ARG0(%esp)
+    SPILL(rIBASE)
+    call dvmQuasiAtomicRead64
+    movl %eax, %ecx
+    movl %edx, %eax
+    UNSPILL(rIBASE)
+    .else
     movl      offStaticField_value(%eax),%ecx    # ecx<- lsw
     movl      4+offStaticField_value(%eax),%eax  # eax<- msw
+    .endif
     SET_VREG_WORD %ecx rINST 0
     FETCH_INST_OPCODE 2 %ecx
     SET_VREG_WORD %eax rINST 1

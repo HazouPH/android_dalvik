@@ -174,7 +174,7 @@ void dvmLogExceptionStackTrace(void);
  * find a catcher.
  */
 extern "C" int dvmFindCatchBlock(Thread* self, int relPc, Object* exception,
-    bool doUnroll, void** newFrame);
+    int doUnroll, void** newFrame);
 
 /*
  * Support for saving exception stack traces and converting them to

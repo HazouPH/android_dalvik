@@ -21,6 +21,7 @@ public class Main {
     public static void main(String args[]) {
         basicTest();
         indexTest();
+        RegionMatchesTest.runTest();
     }
 
     public static void basicTest() {

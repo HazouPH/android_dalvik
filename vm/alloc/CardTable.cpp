@@ -54,9 +54,12 @@ bool dvmCardTableStartup(size_t heapMaximumSize, size_t growthLimit)
     void *allocBase;
     u1 *biasedBase;
     GcHeap *gcHeap = gDvm.gcHeap;
+    int offset;
     void *heapBase = dvmHeapSourceGetBase();
     assert(gcHeap != NULL);
     assert(heapBase != NULL);
+    /* All zeros is the correct initial value; all clean. */
+    assert(GC_CARD_CLEAN == 0);
 
     /* Set up the card table */
     length = heapMaximumSize / GC_CARD_SIZE;
@@ -69,19 +72,17 @@ bool dvmCardTableStartup(size_t heapMaximumSize, size_t growthLimit)
     gcHeap->cardTableBase = (u1*)allocBase;
     gcHeap->cardTableLength = growthLimit / GC_CARD_SIZE;
     gcHeap->cardTableMaxLength = length;
-    gcHeap->cardTableOffset = 0;
-    /* All zeros is the correct initial value; all clean. */
-    assert(GC_CARD_CLEAN == 0);
 
     biasedBase = (u1 *)((uintptr_t)allocBase -
-                        ((uintptr_t)heapBase >> GC_CARD_SHIFT));
-    if (((uintptr_t)biasedBase & 0xff) != GC_CARD_DIRTY) {
-        int offset = GC_CARD_DIRTY - ((uintptr_t)biasedBase & 0xff);
-        gcHeap->cardTableOffset = offset + (offset < 0 ? 0x100 : 0);
-        biasedBase += gcHeap->cardTableOffset;
-    }
+                       ((uintptr_t)heapBase >> GC_CARD_SHIFT));
+    offset = GC_CARD_DIRTY - ((uintptr_t)biasedBase & 0xff);
+    gcHeap->cardTableOffset = offset + (offset < 0 ? 0x100 : 0);
+    biasedBase += gcHeap->cardTableOffset;
     assert(((uintptr_t)biasedBase & 0xff) == GC_CARD_DIRTY);
     gDvm.biasedCardTableBase = biasedBase;
+#ifdef WITH_CONDMARK
+    gDvm.cardImmuneLimit  = 0;
+#endif
 
     return true;
 }
@@ -95,6 +96,39 @@ void dvmCardTableShutdown()
     munmap(gDvm.gcHeap->cardTableBase, gDvm.gcHeap->cardTableLength);
 }
 
+
+
+#ifdef WITH_REGION_GC
+void dvmClearCardTable(bool isPartial) {
+
+    uintptr_t madvbegin, madvend;
+
+    /* use liveBits->max to compute estimate of highest used card address*/
+    madvend = (uintptr_t) dvmCardFromAddr(
+        (u1*)ALIGN_UP(dvmHeapSourceGetLiveBits()->max,GC_CARD_SIZE));
+
+    if (isPartial == true) {
+        /* clear from card corresponding to active heap base */
+        uintptr_t zerobegin= (uintptr_t)dvmCardFromAddr(dvmGetActiveHeapBase());
+        madvbegin= (uintptr_t)ALIGN_UP_TO_PAGE_SIZE(zerobegin);
+
+        if (zerobegin < madvbegin) {
+            /* Zero the region before the page aligned region. */
+            memset((void*)zerobegin, GC_CARD_CLEAN, madvbegin-zerobegin);
+        }
+    }
+    else {
+        /* clear from card table base */
+        madvbegin = (uintptr_t) gDvm.gcHeap->cardTableBase;
+    }
+
+    if (madvbegin < madvend) {
+        /* madvise the page aligned region to kernel. */
+        madvise((void*)madvbegin, madvend - madvbegin, MADV_DONTNEED);
+    }
+}
+
+#else
 void dvmClearCardTable()
 {
     /*
@@ -135,24 +169,22 @@ void dvmClearCardTable()
      * on request will be expanded to the heap maximum.
      */
     assert(gDvm.gcHeap->cardTableBase != NULL);
+    if (gDvm.lowMemoryMode) {
+      // zero out cards with madvise(), discarding all pages in the card table
+      madvise(gDvm.gcHeap->cardTableBase, gDvm.gcHeap->cardTableLength, MADV_DONTNEED);
+    } else {
+      // zero out cards with memset(), using liveBits as an estimate
+      const HeapBitmap* liveBits = dvmHeapSourceGetLiveBits();
+      size_t maxLiveCard = (liveBits->max - liveBits->base) / GC_CARD_SIZE;
+      maxLiveCard = ALIGN_UP_TO_PAGE_SIZE(maxLiveCard);
+      if (maxLiveCard > gDvm.gcHeap->cardTableLength) {
+          maxLiveCard = gDvm.gcHeap->cardTableLength;
+      }
 
-#if 1
-    // zero out cards with memset(), using liveBits as an estimate
-    const HeapBitmap* liveBits = dvmHeapSourceGetLiveBits();
-    size_t maxLiveCard = (liveBits->max - liveBits->base) / GC_CARD_SIZE;
-    maxLiveCard = ALIGN_UP_TO_PAGE_SIZE(maxLiveCard);
-    if (maxLiveCard > gDvm.gcHeap->cardTableLength) {
-        maxLiveCard = gDvm.gcHeap->cardTableLength;
+      memset(gDvm.gcHeap->cardTableBase, GC_CARD_CLEAN, maxLiveCard);
     }
-
-    memset(gDvm.gcHeap->cardTableBase, GC_CARD_CLEAN, maxLiveCard);
-#else
-    // zero out cards with madvise(), discarding all pages in the card table
-    madvise(gDvm.gcHeap->cardTableBase, gDvm.gcHeap->cardTableLength,
-        MADV_DONTNEED);
-#endif
 }
-
+#endif
 /*
  * Returns true iff the address is within the bounds of the card table.
  */
@@ -165,7 +197,7 @@ bool dvmIsValidCard(const u1 *cardAddr)
 }
 
 /*
- * Returns the address of the relevent byte in the card table, given
+ * Returns the address of the relevant byte in the card table, given
  * an address on the heap.
  */
 u1 *dvmCardFromAddr(const void *addr)
@@ -191,9 +223,53 @@ void *dvmAddrFromCard(const u1 *cardAddr)
  */
 void dvmMarkCard(const void *addr)
 {
-    u1 *cardAddr = dvmCardFromAddr(addr);
-    *cardAddr = GC_CARD_DIRTY;
+#ifdef WITH_CONDMARK
+    if ((u1*)addr < (u1*)gDvm.cardImmuneLimit )
+#endif
+    {
+        u1 *cardAddr = dvmCardFromAddr(addr);
+        *cardAddr = GC_CARD_DIRTY;
+    }
 }
+
+#ifdef WITH_CONDMARK
+/*
+ * Disable immune limit.
+ */
+void dvmDisableCardImmuneLimit(void)
+{
+    u1* cardImmuneLimit = (u1*)ULONG_MAX;
+    dvmLockThreadList(NULL);
+    gDvm.cardImmuneLimit  = cardImmuneLimit;
+    for (Thread* thread = gDvm.threadList; thread != NULL; thread = thread->next) {
+        thread->cardImmuneLimit = cardImmuneLimit;
+    }
+    dvmUnlockThreadList();
+}
+
+/*
+ * Enable immune limit.
+ *
+ * for region GC, only active heap is immune, as we still
+ * need to mark zygote's objects.
+ *
+ */
+void dvmEnableCardImmuneLimit(void)
+{
+#ifdef WITH_REGION_GC
+    u1* cardImmuneLimit = gDvm.disableCondmark ? (u1*)ULONG_MAX : (u1*)dvmGetActiveHeapBase();
+#else
+    u1* cardImmuneLimit = gDvm.disableCondmark ? (u1*)ULONG_MAX : 0;
+#endif
+    dvmLockThreadList(NULL);
+    gDvm.cardImmuneLimit = cardImmuneLimit;
+    for (Thread* thread = gDvm.threadList; thread != NULL; thread = thread->next) {
+        thread->cardImmuneLimit = cardImmuneLimit;
+    }
+    dvmUnlockThreadList();
+}
+
+#endif
 
 /*
  * Returns true if the object is on a dirty card.
@@ -321,6 +397,12 @@ static bool isReferentUnmarked(const Object *obj,
     } else if (IS_CLASS_FLAG_SET(obj->clazz, CLASS_ISREFERENCE)) {
         size_t offset = gDvm.offJavaLangRefReference_referent;
         const Object *referent = dvmGetFieldObject(obj, offset);
+        /* if the referent object is NULL, there is no mark bit in the bitmap
+        ** However, there may be other live objects in the fields of this reference
+        */
+        if(referent == 0) {
+            return false;
+        }
         return !dvmHeapBitmapIsObjectBitSet(ctx->markBits, referent);
     } else {
         return false;

@@ -1,2 +1,2 @@
 %verify "executed"
-%include "x86/binflop2addr.S" {"instr":"fdivl","load":"fldl","store":"fstpl"}
+%include "x86/sseBinop2Addr.S" {"instr":"divs","suff":"d"}

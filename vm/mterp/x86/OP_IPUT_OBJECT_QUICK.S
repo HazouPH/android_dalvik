@@ -11,10 +11,14 @@
     testl     %ecx,%ecx                 # is object null?
     je        common_errNullObject
     movl      rINST,(%ecx,%eax,1)
-    movl      rSELF,%eax
     testl     rINST,rINST               # did we store null?
-    movl      offThread_cardTable(%eax),%eax  # get card table base
+    movl      rSELF,%eax
     je        1f                            # skip card mark if null store
+#if defined(WITH_CONDMARK)
+    cmpl      %ecx,offThread_cardImmuneLimit(%eax)
+    jbe       1f
+#endif
+    movl      offThread_cardTable(%eax),%eax  # get card table base
     shrl      $$GC_CARD_SHIFT,%ecx          # object head to card number
     movb      %al,(%eax,%ecx)               # mark card based on object head
 1:

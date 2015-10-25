@@ -1,0 +1,3 @@
+Make sure that the VM handles integer overflow and underflow correctly when
+performing additions. Internal operations performed in the VM should comply
+with Java's expected behavior of wrap around in case of an overflow or underflow.

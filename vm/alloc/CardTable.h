@@ -39,13 +39,23 @@ bool dvmCardTableStartup(size_t heapMaximumSize, size_t growthLimit);
  */
 void dvmCardTableShutdown(void);
 
+
+
+#ifdef WITH_REGION_GC
+/**
+ * @brief Reset used bytes in the card table.
+ * @param isPartial   only reset active cards if true, reset all if false.
+ */
+void dvmClearCardTable(bool isPartial);
+#else
 /*
  * Resets all of the bytes in the card table to clean.
  */
 void dvmClearCardTable(void);
+#endif
 
 /*
- * Returns the address of the relevent byte in the card table, given
+ * Returns the address of the relevant byte in the card table, given
  * an address on the heap.
  */
 u1 *dvmCardFromAddr(const void *addr);
@@ -64,6 +74,18 @@ bool dvmIsValidCard(const u1 *card);
  * Set the card associated with the given address to GC_CARD_DIRTY.
  */
 void dvmMarkCard(const void *addr);
+
+#ifdef WITH_CONDMARK
+/**
+ * Disable immune limit.
+ */
+void dvmDisableCardImmuneLimit(void);
+
+/**
+ * Enable immune limit.
+ */
+void dvmEnableCardImmuneLimit(void);
+#endif
 
 /*
  * Verifies that all gray objects are on a dirty card.

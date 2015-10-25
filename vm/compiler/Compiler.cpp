@@ -21,13 +21,18 @@
 #include "Dalvik.h"
 #include "interp/Jit.h"
 #include "CompilerInternals.h"
+#include "Utility.h"
 #ifdef ARCH_IA32
-#include "codegen/x86/Translator.h"
-#include "codegen/x86/Lower.h"
+#include "MethodContextHandler.h"
+#include "codegen/x86/lightcg/Translator.h"
+#include "codegen/x86/lightcg/Lower.h"
+
+/* JIT cache size that remains allocated when the cache is reset */
+#define JIT_CACHE_MIN_SIZE 4096
 #endif
 
 extern "C" void dvmCompilerTemplateStart(void);
-extern "C" void dmvCompilerTemplateEnd(void);
+extern "C" void dvmCompilerTemplateEnd(void);
 
 static inline bool workQueueLength(void)
 {
@@ -73,7 +78,7 @@ void dvmCompilerForceWorkEnqueue(const u2 *pc, WorkOrderKind kind, void* info)
             retries++;
             if (retries > ENQUEUE_MAX_RETRIES) {
                 ALOGE("JIT: compiler queue wedged - forcing reset");
-                gDvmJit.codeCacheFull = true;  // Force reset
+                dvmCompilerSetCodeAndDataCacheFull();  // Force reset
                 success = true;  // Because we'll drop the order now anyway
             } else {
                 dvmLockMutex(&gDvmJit.compilerLock);
@@ -142,9 +147,6 @@ bool dvmCompilerWorkEnqueue(const u2 *pc, WorkOrderKind kind, void* info)
     gDvmJit.compilerQueueLength++;
     cc = pthread_cond_signal(&gDvmJit.compilerQueueActivity);
     assert(cc == 0);
-#ifdef NDEBUG
-    (void)cc; // prevent error on -Werror
-#endif
 
     dvmUnlockMutex(&gDvmJit.compilerLock);
     return result;
@@ -169,7 +171,7 @@ void dvmCompilerDrainQueue(void)
     dvmUnlockMutex(&gDvmJit.compilerLock);
 }
 
-bool dvmCompilerSetupCodeCache(void)
+bool dvmCompilerSetupCodeAndDataCache(void)
 {
     int fd;
 
@@ -185,8 +187,34 @@ bool dvmCompilerSetupCodeCache(void)
                              MAP_PRIVATE , fd, 0);
     close(fd);
     if (gDvmJit.codeCache == MAP_FAILED) {
-        ALOGE("Failed to mmap the JIT code cache: %s", strerror(errno));
+        ALOGE("Failed to mmap the JIT code cache of size %d: %s", gDvmJit.codeCacheSize, strerror(errno));
         return false;
+    }
+
+    /* Allocate the data cache, if the data cache size is not zero */
+    if (gDvmJit.dataCacheSize != 0) {
+        fd = ashmem_create_region("dalvik-jit-data-cache", gDvmJit.dataCacheSize);
+        if (fd < 0) {
+            ALOGE("Could not create %u-byte ashmem region for the JIT data cache", gDvmJit.dataCacheSize);
+            return false;
+        }
+        gDvmJit.dataCache = mmap(NULL, gDvmJit.dataCacheSize,
+                                 PROT_READ | PROT_WRITE,
+                                 MAP_PRIVATE , fd, 0);
+        close(fd);
+        if (gDvmJit.dataCache == MAP_FAILED) {
+            ALOGE("Failed to mmap the JIT data cache of size %d: %s", gDvmJit.dataCacheSize, strerror(errno));
+            // Set the data cache to NULL
+            gDvmJit.dataCache = NULL;
+            return false;
+        }
+        int result = mprotect(gDvmJit.dataCache, gDvmJit.dataCacheSize,
+                              PROTECT_DATA_CACHE_ATTRS);
+
+        if (result == -1) {
+            ALOGE("Failed to remove the write permission for the data cache");
+            dvmAbort();
+        }
     }
 
     gDvmJit.pageSizeMask = getpagesize() - 1;
@@ -196,7 +224,7 @@ bool dvmCompilerSetupCodeCache(void)
 
 #ifndef ARCH_IA32
     /* Copy the template code into the beginning of the code cache */
-    int templateSize = (intptr_t) dmvCompilerTemplateEnd -
+    int templateSize = (intptr_t) dvmCompilerTemplateEnd -
                        (intptr_t) dvmCompilerTemplateStart;
     memcpy((void *) gDvmJit.codeCache,
            (void *) dvmCompilerTemplateStart,
@@ -216,15 +244,8 @@ bool dvmCompilerSetupCodeCache(void)
     /* Only flush the part in the code cache that is being used now */
     dvmCompilerCacheFlush((intptr_t) gDvmJit.codeCache,
                           (intptr_t) gDvmJit.codeCache + templateSize, 0);
-
-    int result = mprotect(gDvmJit.codeCache, gDvmJit.codeCacheSize,
-                          PROTECT_CODE_CACHE_ATTRS);
-
-    if (result == -1) {
-        ALOGE("Failed to remove the write permission for the code cache");
-        dvmAbort();
-    }
 #else
+    gDvmJit.dataCacheByteUsed = 0;
     gDvmJit.codeCacheByteUsed = 0;
     stream = (char*)gDvmJit.codeCache + gDvmJit.codeCacheByteUsed;
     ALOGV("codeCache = %p stream = %p before initJIT", gDvmJit.codeCache, stream);
@@ -234,6 +255,14 @@ bool dvmCompilerSetupCodeCache(void)
     gDvmJit.codeCacheByteUsed = (stream - streamStart);
     ALOGV("stream = %p after initJIT", stream);
 #endif
+
+    int result = mprotect(gDvmJit.codeCache, gDvmJit.codeCacheSize,
+                          PROTECT_CODE_CACHE_ATTRS);
+
+    if (result == -1) {
+        ALOGE("Failed to remove the write permission for the code cache");
+        dvmAbort();
+    }
 
     return true;
 }
@@ -279,7 +308,7 @@ static void crawlDalvikStack(Thread *thread, bool print)
            (u1 *) (saveArea+1) == thread->interpStackStart);
 }
 
-static void resetCodeCache(void)
+static void resetCodeAndDataCache(void)
 {
     Thread* thread;
     u8 startTime = dvmGetRelativeTimeUsec();
@@ -304,9 +333,10 @@ static void resetCodeCache(void)
     }
     dvmUnlockThreadList();
 
-    if (inJit) {
-        ALOGD("JIT code cache reset delayed (%d bytes %d/%d)",
-             gDvmJit.codeCacheByteUsed, gDvmJit.numCodeCacheReset,
+    if (inJit != 0) {
+        ALOGD("JIT code and data cache reset delayed (%d + %d bytes %d/%d)",
+             gDvmJit.codeCacheByteUsed, gDvmJit.dataCacheByteUsed,
+             gDvmJit.numCodeCacheReset,
              ++gDvmJit.numCodeCacheResetDelayed);
         return;
     }
@@ -338,11 +368,47 @@ static void resetCodeCache(void)
                           (intptr_t) gDvmJit.codeCache +
                           gDvmJit.codeCacheByteUsed, 0);
 
-    PROTECT_CODE_CACHE(gDvmJit.codeCache, gDvmJit.codeCacheByteUsed);
+    /* return the memory to the system */
+    madvise((char *) gDvmJit.codeCache + JIT_CACHE_MIN_SIZE,
+            gDvmJit.codeCacheSize - JIT_CACHE_MIN_SIZE,
+            MADV_DONTNEED);
 
-    /* Reset the current mark of used bytes to the end of template code */
+    /* store the current size */
+    unsigned int codeCacheSize = gDvmJit.codeCacheByteUsed;
+
+    /* Reset the current mark of used bytes to the end of template code
+     * It should be done under the lock i.e. before PROTECT_CODE_CACHE macro
+     */
     gDvmJit.codeCacheByteUsed = gDvmJit.templateSize;
     gDvmJit.numCompilations = 0;
+
+    PROTECT_CODE_CACHE(gDvmJit.codeCache, codeCacheSize);
+
+    /* Clean the data cache, if the data cache exists */
+    if (gDvmJit.dataCache != NULL) {
+        UNPROTECT_DATA_CACHE(gDvmJit.dataCache, gDvmJit.dataCacheByteUsed);
+        /*
+         * Wipe out the data cache content to force immediate crashes if
+         * stale JIT'ed data is invoked.
+         */
+        dvmCompilerCacheClear((char *) gDvmJit.dataCache,
+                              gDvmJit.dataCacheByteUsed);
+
+        dvmCompilerCacheFlush((intptr_t) gDvmJit.dataCache,
+                              (intptr_t) gDvmJit.dataCache +
+                              gDvmJit.dataCacheByteUsed, 0);
+
+        /* store the current size */
+        unsigned int dataCacheSize = gDvmJit.dataCacheByteUsed;
+
+        /* Reset the data cache used bytes to 0
+         * It should be done under the lock i.e. before PROTECT_DATA_CACHE macro
+         */
+        gDvmJit.dataCacheByteUsed = 0;
+
+        PROTECT_DATA_CACHE(gDvmJit.dataCache, dataCacheSize);
+    }
+
 
     /* Reset the work queue */
     memset(gDvmJit.compilerWorkQueue, 0,
@@ -363,12 +429,13 @@ static void resetCodeCache(void)
 
     /* All clear now */
     gDvmJit.codeCacheFull = false;
+    gDvmJit.dataCacheFull = false;
 
     dvmUnlockMutex(&gDvmJit.compilerLock);
 
-    ALOGD("JIT code cache reset in %lld ms (%d bytes %d/%d)",
+    ALOGD("JIT code and data cache reset in %lld ms (%d + %d bytes %d/%d)",
          (dvmGetRelativeTimeUsec() - startTime) / 1000,
-         byteUsed, ++gDvmJit.numCodeCacheReset,
+         byteUsed, gDvmJit.dataCacheByteUsed, ++gDvmJit.numCodeCacheReset,
          gDvmJit.numCodeCacheResetDelayed);
 }
 
@@ -382,7 +449,7 @@ static void resetCodeCache(void)
 void dvmCompilerPerformSafePointChecks(void)
 {
     if (gDvmJit.codeCacheFull) {
-        resetCodeCache();
+        resetCodeAndDataCache();
     }
     dvmCompilerPatchInlineCache();
 }
@@ -402,7 +469,7 @@ static bool compilerThreadStartup(void)
      * from the zygote.
      */
     if (gDvmJit.codeCache == NULL) {
-        if (!dvmCompilerSetupCodeCache())
+        if (!dvmCompilerSetupCodeAndDataCache())
             goto fail;
     }
 
@@ -661,9 +728,6 @@ static void *compilerThreadStart(void *arg)
             int cc;
             cc = pthread_cond_signal(&gDvmJit.compilerQueueEmpty);
             assert(cc == 0);
-#ifdef NDEBUG
-            (void)cc; // prevent bug on -Werror
-#endif
             pthread_cond_wait(&gDvmJit.compilerQueueActivity,
                               &gDvmJit.compilerLock);
             continue;
@@ -698,9 +762,12 @@ static void *compilerThreadStart(void *arg)
                         dvmJitResizeJitTable(gDvmJit.jitTableSize * 2);
                     /*
                      * If the jit table is full, consider it's time to reset
-                     * the code cache too.
+                     * the code and data cache too.
                      */
-                    gDvmJit.codeCacheFull |= resizeFail;
+                    if (resizeFail == true)
+                    {
+                        dvmCompilerSetCodeAndDataCacheFull();
+                    }
                 }
                 if (gDvmJit.haltCompilerThread) {
                     ALOGD("Compiler shutdown in progress - discarding request");
@@ -759,6 +826,7 @@ bool dvmCompilerStartup(void)
     dvmInitMutex(&gDvmJit.compilerLock);
     dvmInitMutex(&gDvmJit.compilerICPatchLock);
     dvmInitMutex(&gDvmJit.codeCacheProtectionLock);
+    dvmInitMutex(&gDvmJit.dataCacheProtectionLock);
     dvmLockMutex(&gDvmJit.compilerLock);
     pthread_cond_init(&gDvmJit.compilerQueueActivity, NULL);
     pthread_cond_init(&gDvmJit.compilerQueueEmpty, NULL);
@@ -791,6 +859,16 @@ void dvmCompilerShutdown(void)
         dvmCompilerDumpStats();
         while (gDvmJit.compilerQueueLength)
           sleep(5);
+
+#if defined(WITH_JIT_TUNING)
+    /* Dump method cfg with execution count of each edge in method profile mode */
+    if (gDvmJit.methodProfTable != NULL) {
+        dvmHashTableLock(gDvmJit.methodProfTable);
+        dvmHashForeach(gDvmJit.methodProfTable, dvmCompilerDumpMethodCFGHandle, NULL);
+        dvmHashTableUnlock(gDvmJit.methodProfTable);
+    }
+#endif
+
     }
 
     if (gDvmJit.compilerHandle) {
@@ -807,7 +885,13 @@ void dvmCompilerShutdown(void)
             ALOGD("Compiler thread has shut down");
     }
 
+    /* Remove all the method contexts */
+    MethodContextHandler::eraseMethodMap();
+
     /* Break loops within the translation cache */
+#if defined(VTUNE_DALVIK)
+    gDvmJit.vtuneInfo = kVTuneInfoDisabled; // stop sending unchain updates to VTune
+#endif
     dvmJitUnchainAll();
 
     /*
@@ -857,7 +941,7 @@ void dvmCompilerUpdateGlobalState()
         dvmUnlockMutex(&gDvmJit.compilerLock);
         if (resetRequired) {
             dvmSuspendAllThreads(SUSPEND_FOR_CC_RESET);
-            resetCodeCache();
+            resetCodeAndDataCache();
             dvmResumeAllThreads(SUSPEND_FOR_CC_RESET);
         }
     }

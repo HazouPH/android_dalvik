@@ -50,7 +50,7 @@ extern "C" void dvmJitToInterpNoChain();
 extern "C" void dvmJitToInterpPunt();
 extern "C" void dvmJitToInterpSingleStep();
 extern "C" void dvmJitToInterpTraceSelect();
-#if defined(WITH_SELF_VERIFICATION)
+#if defined(ARCH_IA32) || defined(WITH_SELF_VERIFICATION)
 extern "C" void dvmJitToInterpBackwardBranch();
 #endif
 #endif
@@ -766,9 +766,7 @@ static void updateDebugger(const Method* method, const u2* pc, const u4* fp,
     if (pCtrl->active && pCtrl->thread == self) {
         int frameDepth;
         bool doStop = false;
-#ifndef LOG_NDEBUG
         const char* msg = NULL;
-#endif
 
         assert(!dvmIsNativeMethod(method));
 
@@ -780,20 +778,14 @@ static void updateDebugger(const Method* method, const u2* pc, const u4* fp,
              */
             if (pCtrl->method != method) {
                 doStop = true;
-#ifndef LOG_NDEBUG
                 msg = "new method";
-#endif
             } else if (pCtrl->size == SS_MIN) {
                 doStop = true;
-#ifndef LOG_NDEBUG
                 msg = "new instruction";
-#endif
             } else if (!dvmAddressSetGet(
                     pCtrl->pAddressSet, pc - method->insns)) {
                 doStop = true;
-#ifndef LOG_NDEBUG
                 msg = "new line";
-#endif
             }
         } else if (pCtrl->depth == SD_OVER) {
             /*
@@ -807,22 +799,16 @@ static void updateDebugger(const Method* method, const u2* pc, const u4* fp,
             if (frameDepth < pCtrl->frameDepth) {
                 /* popped up one or more frames, always trigger */
                 doStop = true;
-#ifndef LOG_NDEBUG
                 msg = "method pop";
-#endif
             } else if (frameDepth == pCtrl->frameDepth) {
                 /* same depth, see if we moved */
                 if (pCtrl->size == SS_MIN) {
                     doStop = true;
-#ifndef LOG_NDEBUG
                     msg = "new instruction";
-#endif
                 } else if (!dvmAddressSetGet(pCtrl->pAddressSet,
                             pc - method->insns)) {
                     doStop = true;
-#ifndef LOG_NDEBUG
                     msg = "new line";
-#endif
                 }
             }
         } else {
@@ -838,9 +824,7 @@ static void updateDebugger(const Method* method, const u2* pc, const u4* fp,
             frameDepth = dvmComputeVagueFrameDepth(self, fp);
             if (frameDepth < pCtrl->frameDepth) {
                 doStop = true;
-#ifndef LOG_NDEBUG
                 msg = "method pop";
-#endif
             }
         }
 
@@ -1015,9 +999,6 @@ void dvmDumpRegs(const Method* method, const u4* framePtr, bool inOnly)
 s4 dvmInterpHandlePackedSwitch(const u2* switchData, s4 testVal)
 {
     const int kInstrLen = 3;
-    u2 size;
-    s4 firstKey;
-    const s4* entries;
 
     /*
      * Packed switch data format:
@@ -1034,13 +1015,14 @@ s4 dvmInterpHandlePackedSwitch(const u2* switchData, s4 testVal)
         return kInstrLen;
     }
 
-    size = *switchData++;
+    u2 size = *switchData++;
     assert(size > 0);
 
-    firstKey = *switchData++;
+    s4 firstKey = *switchData++;
     firstKey |= (*switchData++) << 16;
 
-    if (testVal < firstKey || testVal >= firstKey + size) {
+    int index = testVal - firstKey;
+    if (index < 0 || index >= size) {
         LOGVV("Value %d not found in switch (%d-%d)",
             testVal, firstKey, firstKey+size-1);
         return kInstrLen;
@@ -1049,14 +1031,14 @@ s4 dvmInterpHandlePackedSwitch(const u2* switchData, s4 testVal)
     /* The entries are guaranteed to be aligned on a 32-bit boundary;
      * we can treat them as a native int array.
      */
-    entries = (const s4*) switchData;
+    const s4* entries = (const s4*) switchData;
     assert(((u4)entries & 0x3) == 0);
 
-    assert(testVal - firstKey >= 0 && testVal - firstKey < size);
+    assert(index >= 0 && index < size);
     LOGVV("Value %d found in slot %d (goto 0x%02x)",
-        testVal, testVal - firstKey,
-        s4FromSwitchData(&entries[testVal - firstKey]));
-    return s4FromSwitchData(&entries[testVal - firstKey]);
+        testVal, index,
+        s4FromSwitchData(&entries[index]));
+    return s4FromSwitchData(&entries[index]);
 }
 
 /*
@@ -1647,7 +1629,7 @@ void dvmInitInterpreterState(Thread* self)
         dvmJitToInterpPunt,
         dvmJitToInterpSingleStep,
         dvmJitToInterpTraceSelect,
-#if defined(WITH_SELF_VERIFICATION)
+#if defined(ARCH_IA32) || defined(WITH_SELF_VERIFICATION)
         dvmJitToInterpBackwardBranch,
 #else
         NULL,
@@ -1657,6 +1639,9 @@ void dvmInitInterpreterState(Thread* self)
 
     // Begin initialization
     self->cardTable = gDvm.biasedCardTableBase;
+#ifdef WITH_CONDMARK
+    self->cardImmuneLimit = gDvm.cardImmuneLimit;
+#endif
 #if defined(WITH_JIT)
     // One-time initializations
     self->jitToInterpEntries = jitToInterpEntries;
@@ -1678,8 +1663,13 @@ void dvmInitializeInterpBreak(Thread* thread)
     if (gDvm.instructionCountEnableCount > 0) {
         dvmEnableSubMode(thread, kSubModeInstCounting);
     }
-    if (dvmIsMethodTraceActive()) {
-        dvmEnableSubMode(thread, kSubModeMethodTrace);
+    TracingMode mode = dvmGetMethodTracingMode();
+    if (mode != TRACING_INACTIVE) {
+        if (mode == SAMPLE_PROFILING_ACTIVE) {
+            dvmEnableSubMode(thread, kSubModeSampleTrace);
+        } else {
+            dvmEnableSubMode(thread, kSubModeMethodTrace);
+        }
     }
     if (gDvm.emulatorTraceEnableCount > 0) {
         dvmEnableSubMode(thread, kSubModeEmulatorTrace);
@@ -1687,9 +1677,18 @@ void dvmInitializeInterpBreak(Thread* thread)
     if (gDvm.debuggerActive) {
         dvmEnableSubMode(thread, kSubModeDebuggerActive);
     }
+
 #if defined(WITH_JIT)
     dvmJitUpdateThreadStateSingle(thread);
 #endif
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+    // Method profile mode, force checkBefore
+    if (gDvmJit.methodProfTable != NULL) {
+        dvmEnableSubMode(thread, kSubModeCheckAlways);
+    }
+#endif
+
 #if 0
     // Debugging stress mode - force checkBefore
     dvmEnableSubMode(thread, kSubModeCheckAlways);
@@ -1707,6 +1706,16 @@ void dvmCheckBefore(const u2 *pc, u4 *fp, Thread* self)
     const Method* method = self->interpSave.method;
     assert(pc >= method->insns && pc <
            method->insns + dvmGetMethodInsnsSize(method));
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+     /*
+     * In method profile mode, if the method is which we are profiling, increase the counter
+     * of the bytecode, so we can record how many times this bytecode has been executed.
+     */
+    if (IS_METHOD_FLAG_SET(method, METHOD_PROFILE_MATCHED) == true) {
+        android_atomic_inc(&method->profileTable[pc - method->insns]);
+    }
+#endif
 
 #if 0
     /*

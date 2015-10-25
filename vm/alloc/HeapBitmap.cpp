@@ -16,6 +16,7 @@
 
 #include "Dalvik.h"
 #include "HeapBitmap.h"
+#include "HeapBitmapInlines.h"
 #include <sys/mman.h>   /* for PROT_* */
 
 /*
@@ -70,7 +71,7 @@ void dvmHeapBitmapZero(HeapBitmap *hb)
          * Successive page faults will return zeroed memory.
          */
         madvise(hb->bits, hb->bitsLen, MADV_DONTNEED);
-        hb->max = hb->base - 1;
+        dvmHeapBitmapSetMax(hb,hb->base - 1);
     }
 }
 
@@ -116,6 +117,8 @@ void dvmHeapBitmapWalk(const HeapBitmap *bitmap, BitmapCallback *callback,
     }
 }
 
+
+#ifdef WITH_REGION_GC
 /*
  * Similar to dvmHeapBitmapWalk but the callback routine is permitted
  * to change the bitmap bits and max during traversal.  Used by the
@@ -128,6 +131,33 @@ void dvmHeapBitmapWalk(const HeapBitmap *bitmap, BitmapCallback *callback,
  * bit for an address below the finger, this address will not be
  * visited.
  */
+void dvmHeapBitmapScanWalk(HeapBitmap *bitmap,
+                           uintptr_t base, uintptr_t max,
+                           BitmapScanCallback *callback, void *arg)
+{
+    assert(bitmap != NULL);
+    assert(bitmap->bits != NULL);
+    assert(callback != NULL);
+    uintptr_t end = HB_OFFSET_TO_INDEX(max - bitmap->base);
+    uintptr_t start = HB_OFFSET_TO_INDEX(base - bitmap->base);
+    for (uintptr_t i = start; i <= end; ++i) {
+        unsigned long word = bitmap->bits[i];
+        if (UNLIKELY(word != 0)) {
+            unsigned long highBit = 1 << (HB_BITS_PER_WORD - 1);
+            uintptr_t ptrBase = HB_INDEX_TO_OFFSET(i) + bitmap->base;
+            void *finger = (void *)(HB_INDEX_TO_OFFSET(i + 1) + bitmap->base);
+            while (word != 0) {
+                const int shift = CLZ(word);
+                Object *addr = (Object *)(ptrBase + shift * HB_OBJECT_ALIGNMENT);
+                (*callback)(addr, finger, arg);
+                word &= ~(highBit >> shift);
+            }
+            end = HB_OFFSET_TO_INDEX(bitmap->max - bitmap->base);
+        }
+
+    }
+}
+#else
 void dvmHeapBitmapScanWalk(HeapBitmap *bitmap,
                            BitmapScanCallback *callback, void *arg)
 {
@@ -152,6 +182,8 @@ void dvmHeapBitmapScanWalk(HeapBitmap *bitmap,
         }
     }
 }
+
+#endif
 
 /*
  * Walk through the bitmaps in increasing address order, and find the
@@ -179,12 +211,13 @@ void dvmHeapBitmapSweepWalk(const HeapBitmap *liveHb, const HeapBitmap *markHb,
          */
         return;
     }
-    void *pointerBuf[4 * HB_BITS_PER_WORD];
+    void *pointerBuf[8 * HB_BITS_PER_WORD];
     void **pb = pointerBuf;
     size_t start = HB_OFFSET_TO_INDEX(base - liveHb->base);
     size_t end = HB_OFFSET_TO_INDEX(max - liveHb->base);
     unsigned long *live = liveHb->bits;
     unsigned long *mark = markHb->bits;
+
     for (size_t i = start; i <= end; i++) {
         unsigned long garbage = live[i] & ~mark[i];
         if (UNLIKELY(garbage != 0)) {

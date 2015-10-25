@@ -126,6 +126,14 @@ StringObject* dvmCreateStringFromUnicode(const u2* unichars, int len);
 char* dvmCreateCstrFromString(const StringObject* jstr);
 
 /*
+ * @brief Convert java/lang/String object to UTF-8 C string.
+ * @param jstr pointer to an string object to convert
+ * @param cstr pointer to an C string buffer to put the converted string
+ * @param len maximum number of characters to be converted from jstr
+ */
+void dvmConvertStringToCstr(const StringObject* jstr, char* cstr, int lenMax);
+
+/*
  * Create a UTF-8 C string from a region of a java/lang/String.  (Used by
  * the JNI GetStringUTFRegion call.)
  */

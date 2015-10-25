@@ -118,7 +118,7 @@ JdwpState* dvmJdwpStartup(const JdwpStartupParams* params);
 /*
  * Shut everything down.
  */
-void dvmJdwpShutdown(JdwpState* state);
+void dvmJdwpShutdown(JdwpState* state, bool freeState = true);
 
 /*
  * Returns "true" if a debugger or DDM is connected.

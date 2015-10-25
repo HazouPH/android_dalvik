@@ -64,6 +64,9 @@ while true; do
     elif [ "x$1" = "x--no-optimize" ]; then
         run_args="${run_args} --no-optimize"
         shift
+    elif [ "x$1" = "x--pcg" ]; then
+        run_args="${run_args} --pcg"
+        shift
     elif [ "x$1" = "x--valgrind" ]; then
         run_args="${run_args} --valgrind"
         shift
@@ -95,7 +98,7 @@ if [ "$usage" = "yes" ]; then
              "further documentation:"
         echo "    --debug --dev --fast --host --no-optimize --no-verify" \
              "--portable"
-        echo "    --reference --update --valgrind --zygote"
+        echo "    --reference --update --valgrind --zygote --pcg"
     ) 1>&2
     exit 1
 fi

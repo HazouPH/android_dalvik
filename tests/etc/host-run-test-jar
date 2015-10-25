@@ -12,6 +12,7 @@
 #   --valgrind    -- use valgrind
 #   --no-verify   -- turn off verification (on by default)
 #   --no-optimize -- turn off optimization (on by default)
+#   --pcg         -- use PCG as the JIT codegen
 
 msg() {
     if [ "$QUIET" = "n" ]; then
@@ -28,6 +29,8 @@ VALGRIND="n"
 DEV_MODE="n"
 QUIET="n"
 PRECISE="y"
+PCG="n"
+USERPLUGIN=""
 
 while true; do
     if [ "x$1" = "x--quiet" ]; then
@@ -39,10 +42,12 @@ while true; do
         shift
     elif [ "x$1" = "x--fast" ]; then
         INTERP="fast"
+        PCG="n"
         msg "Using fast interpreter"
         shift
     elif [ "x$1" = "x--portable" ]; then
         INTERP="portable"
+        PCG="n"
         msg "Using portable interpreter"
         shift
     elif [ "x$1" = "x--debug" ]; then
@@ -65,6 +70,9 @@ while true; do
         shift
     elif [ "x$1" = "x--no-precise" ]; then
         PRECISE="n"
+        shift
+    elif [ "x$1" = "x--pcg" ]; then
+        PCG="y"
         shift
     elif [ "x$1" = "x--" ]; then
         shift
@@ -110,6 +118,13 @@ else
     valgrind_cmd=""
 fi
 
+if [ "$PCG" = "y" ]; then
+    msg "Running with PCG"
+    USERPLUGIN="-Xjituserplugin:libpcgdvmjit.so"
+else
+    USERPLUGIN=""
+fi
+
 if [ "$PRECISE" = "y" ]; then
     GC_OPTS="-Xgc:precise -Xgenregmap"
 else
@@ -141,7 +156,7 @@ export DYLD_LIBRARY_PATH="${ANDROID_ROOT}/lib"
 
 exe="${ANDROID_ROOT}/bin/dalvikvm"
 framework="${BASE}/system/framework"
-bpath="${framework}/core.jar:${framework}/ext.jar:${framework}/framework.jar"
+bpath="${framework}/core.jar:${framework}/conscrypt.jar:${framework}/ext.jar:${framework}/framework.jar"
 
 if [ "$DEBUG" = "y" ]; then
     PORT=8000
@@ -155,5 +170,5 @@ if [ "$GDB" = "y" ]; then
 fi
 
 $valgrind_cmd $gdb $exe $gdbargs "-Xbootclasspath:${bpath}" \
-    $DEX_VERIFY $DEX_OPTIMIZE $DEX_DEBUG $GC_OPTS "-Xint:${INTERP}" -ea \
+    $DEX_VERIFY $DEX_OPTIMIZE $DEX_DEBUG $GC_OPTS "-Xint:${INTERP}" $USERPLUGIN -ea \
     -cp test.jar Main "$@"

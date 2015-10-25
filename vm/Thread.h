@@ -76,7 +76,7 @@ void dvmSlayDaemons(void);
 #define kInternalRefMax         4096    /* mainly a sanity check */
 
 #define kMinStackSize       (512 + STACK_OVERFLOW_RESERVE)
-#define kDefaultStackSize   (16*1024)   /* four 4K pages */
+#define kDefaultStackSize   (20*1024)   /* five 4K pages */
 #define kMaxStackSize       (256*1024 + STACK_OVERFLOW_RESERVE)
 
 /*
@@ -143,13 +143,27 @@ struct Thread {
     int suspendCount;
     int dbgSuspendCount;
 
+    /* address of the card table*/
     u1*         cardTable;
+#ifdef WITH_CONDMARK
+    /* address of the card immune limit */
+    u1*         cardImmuneLimit;
+#else
+    /* to keep offsets */
+    u1*         unused_cardImmuneLimit;
+#endif
 
     /* current limit of stack; flexes for StackOverflowError */
     const u1*   interpStackEnd;
 
-    /* FP of bottom-most (currently executing) stack frame on interp stack */
+#if 0
+    /* FP of bottom-most (currently executing) stack frame on interp stack
+     * TODO : we may want to remove it later if not used in future releases.
+     * compiled off as unused for now and to keep following offsets unchanged.
+     */
     void*       XcurFrame;
+#endif
+
     /* current exception, or NULL if nothing pending */
     Object*     exception;
 
@@ -239,6 +253,10 @@ struct Thread {
     /* the JNIEnv pointer associated with this thread */
     JNIEnv*     jniEnv;
 
+#if WITH_TLA
+    /* the ThreadLocalHeap associated with this Thread */
+    struct TLHeap* tlh;
+#endif
     /* internal reference tracking */
     ReferenceTable  internalLocalRefTable;
 
@@ -286,6 +304,10 @@ struct Thread {
     /* base time for per-thread CPU timing (used by method profiling) */
     bool        cpuClockBaseSet;
     u8          cpuClockBase;
+
+    /* previous stack trace sample and length (used by sampling profiler) */
+    const Method** stackTraceSample;
+    size_t stackTraceSampleLength;
 
     /* memory allocation profiling state */
     AllocProfState allocProf;
@@ -358,6 +380,7 @@ enum SuspendCause {
     SUSPEND_FOR_DEX_OPT,
     SUSPEND_FOR_VERIFY,
     SUSPEND_FOR_HPROF,
+    SUSPEND_FOR_SAMPLING,
 #if defined(WITH_JIT)
     SUSPEND_FOR_TBL_RESIZE,  // jit-table resize
     SUSPEND_FOR_IC_PATCH,    // polymorphic callsite inline-cache patch
@@ -399,6 +422,8 @@ INLINE bool dvmCheckSuspendQuick(Thread* self) {
 /*
  * Used when changing thread state.  Threads may only change their own.
  * The "self" argument, which may be NULL, is accepted as an optimization.
+ * The releaseThreadLock is false by default. It is true only when this is
+ * called from dvmLockThreadList.
  *
  * If you're calling this before waiting on a resource (e.g. THREAD_WAIT
  * or THREAD_MONITOR), do so in the same function as the wait -- this records
@@ -408,7 +433,7 @@ INLINE bool dvmCheckSuspendQuick(Thread* self) {
  *
  * Returns the old status.
  */
-ThreadStatus dvmChangeStatus(Thread* self, ThreadStatus newStatus);
+ThreadStatus dvmChangeStatus(Thread* self, ThreadStatus newStatus, bool releaseThreadListLock = false);
 
 /*
  * Initialize a mutex.

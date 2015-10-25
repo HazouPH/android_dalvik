@@ -22,6 +22,10 @@
 #include "alloc/HeapSource.h"
 #include "alloc/MarkSweep.h"
 #include "alloc/Visit.h"
+#ifdef WITH_TLA
+#include "alloc/ThreadLocalHeap.h"
+#endif
+
 #include <limits.h>     // for ULONG_MAX
 #include <sys/mman.h>   // for madvise(), mmap()
 #include <errno.h>
@@ -211,6 +215,26 @@ void dvmHeapReMarkRootSet()
     dvmVisitRoots(rootReMarkObjectVisitor, ctx);
 }
 
+#ifdef WITH_REGION_GC
+bool enableCrossHeapPointerCheck = false;
+
+void dvmSetEnableCrossHeapPointerCheck(bool status)
+{
+    enableCrossHeapPointerCheck = status;
+}
+
+static inline void
+_checkCrossHeapPointer(Object *from, Object *to){
+    if(enableCrossHeapPointerCheck){
+        hsCheckPointer2AppHeap(from, to);
+    }
+}
+
+#define checkCrossHeapPointer _checkCrossHeapPointer
+#else
+#define checkCrossHeapPointer(...) ((void)0)
+#endif
+
 /*
  * Scans instance fields.
  */
@@ -225,6 +249,7 @@ static void scanFields(const Object *obj, GcMarkContext *ctx)
             size_t rshift = CLZ(refOffsets);
             size_t offset = CLASS_OFFSET_FROM_CLZ(rshift);
             Object *ref = dvmGetFieldObject(obj, offset);
+            checkCrossHeapPointer((Object *)obj, ref);
             markObject(ref, ctx);
             refOffsets &= ~(CLASS_HIGH_BIT >> rshift);
         }
@@ -236,6 +261,7 @@ static void scanFields(const Object *obj, GcMarkContext *ctx)
             for (int i = 0; i < clazz->ifieldRefCount; ++i, ++field) {
                 void *addr = BYTE_OFFSET(obj, field->byteOffset);
                 Object *ref = ((JValue *)addr)->l;
+                checkCrossHeapPointer((Object *)obj, ref);
                 markObject(ref, ctx);
             }
         }
@@ -253,6 +279,7 @@ static void scanStaticFields(const ClassObject *clazz, GcMarkContext *ctx)
         char ch = clazz->sfields[i].signature[0];
         if (ch == '[' || ch == 'L') {
             Object *obj = clazz->sfields[i].value.l;
+            checkCrossHeapPointer((Object *)clazz, obj);
             markObject(obj, ctx);
         }
     }
@@ -266,7 +293,9 @@ static void scanInterfaces(const ClassObject *clazz, GcMarkContext *ctx)
     assert(clazz != NULL);
     assert(ctx != NULL);
     for (int i = 0; i < clazz->interfaceCount; ++i) {
-        markObject((const Object *)clazz->interfaces[i], ctx);
+        Object *interface = (Object *)clazz->interfaces[i];
+        checkCrossHeapPointer((Object *)clazz, interface);
+        markObject(interface, ctx);
     }
 }
 
@@ -279,15 +308,19 @@ static void scanClassObject(const Object *obj, GcMarkContext *ctx)
     assert(obj != NULL);
     assert(dvmIsClassObject(obj));
     assert(ctx != NULL);
+    checkCrossHeapPointer((Object *)obj, (Object *)obj->clazz);
     markObject((const Object *)obj->clazz, ctx);
     const ClassObject *asClass = (const ClassObject *)obj;
     if (IS_CLASS_FLAG_SET(asClass, CLASS_ISARRAY)) {
+        checkCrossHeapPointer((Object *)asClass, (Object *)asClass->elementClass);
         markObject((const Object *)asClass->elementClass, ctx);
     }
     /* Do super and the interfaces contain Objects and not dex idx values? */
     if (asClass->status > CLASS_IDX) {
+        checkCrossHeapPointer((Object *)asClass, (Object *)asClass->super);
         markObject((const Object *)asClass->super, ctx);
     }
+    checkCrossHeapPointer((Object *)asClass, asClass->classLoader);
     markObject((const Object *)asClass->classLoader, ctx);
     scanFields(obj, ctx);
     scanStaticFields(asClass, ctx);
@@ -305,11 +338,13 @@ static void scanArrayObject(const Object *obj, GcMarkContext *ctx)
     assert(obj != NULL);
     assert(obj->clazz != NULL);
     assert(ctx != NULL);
+    checkCrossHeapPointer((Object *)obj, (Object *)obj->clazz);
     markObject((const Object *)obj->clazz, ctx);
     if (IS_CLASS_FLAG_SET(obj->clazz, CLASS_ISOBJECTARRAY)) {
         const ArrayObject *array = (const ArrayObject *)obj;
         const Object **contents = (const Object **)(void *)array->contents;
         for (size_t i = 0; i < array->length; ++i) {
+            checkCrossHeapPointer((Object *)obj, (Object *)contents[i]);
             markObject(contents[i], ctx);
         }
     }
@@ -440,6 +475,7 @@ static void scanDataObject(const Object *obj, GcMarkContext *ctx)
     assert(obj != NULL);
     assert(obj->clazz != NULL);
     assert(ctx != NULL);
+    checkCrossHeapPointer((Object *)obj, (Object *)obj->clazz);
     markObject((const Object *)obj->clazz, ctx);
     scanFields(obj, ctx);
     if (IS_CLASS_FLAG_SET(obj->clazz, CLASS_ISREFERENCE)) {
@@ -526,8 +562,9 @@ const u1 *scanDirtyCards(const u1 *start, const u1 *end,
         if (*card != GC_CARD_DIRTY) {
             return card;
         }
-        const u1 *ptr = prevAddr ? prevAddr : (u1*)dvmAddrFromCard(card);
-        const u1 *limit = ptr + GC_CARD_SIZE;
+        const u1 *cardPtr = (u1*)dvmAddrFromCard(card);
+        const u1 *ptr = prevAddr ? prevAddr : cardPtr;
+        const u1 *limit = cardPtr + GC_CARD_SIZE;
         while (ptr < limit) {
             Object *obj = nextGrayObject(ptr, limit, markBits);
             if (obj == NULL) {
@@ -536,7 +573,7 @@ const u1 *scanDirtyCards(const u1 *start, const u1 *end,
             scanObject(obj, ctx);
             ptr = (u1*)obj + ALIGN_UP(objectSize(obj), HB_OBJECT_ALIGNMENT);
         }
-        if (ptr < limit) {
+        if (ptr <= limit) {
             /* Ended within the current card, advance to the next card. */
             ++card;
             prevAddr = NULL;
@@ -558,8 +595,9 @@ static void scanGrayObjects(GcMarkContext *ctx)
     const u1 *base, *limit, *ptr, *dirty;
 
     base = &h->cardTableBase[0];
-    limit = dvmCardFromAddr((u1 *)dvmHeapSourceGetLimit());
-    assert(limit <= &h->cardTableBase[h->cardTableLength]);
+    // The limit is the card one after the last accessible card.
+    limit = dvmCardFromAddr((u1 *)dvmHeapSourceGetLimit() - GC_CARD_SIZE) + 1;
+    assert(limit <= &base[h->cardTableOffset + h->cardTableLength]);
 
     ptr = base;
     for (;;) {
@@ -592,16 +630,43 @@ static void scanBitmapCallback(Object *obj, void *finger, void *arg)
  * reachable objects.  When this returns, the entire set of
  * live objects will be marked and the mark stack will be empty.
  */
+#ifdef WITH_REGION_GC
+void dvmHeapScanMarkedObjects(bool isPartial)
+#else
 void dvmHeapScanMarkedObjects(void)
+#endif
 {
     GcMarkContext *ctx = &gDvm.gcHeap->markContext;
 
     assert(ctx->finger == NULL);
 
+#ifdef WITH_REGION_GC
+    /* In Region GC minor collection, GC only scans the active heap.
+     * Other GC mode will scan the whole heaps.
+     */
+    uintptr_t base[HEAP_SOURCE_MAX_HEAP_COUNT];
+    uintptr_t max[HEAP_SOURCE_MAX_HEAP_COUNT];
+
+    uintptr_t basePtr, endPtr;
+
+    if(isPartial == true){
+        /* Prepare the make bitmap for the active heap in minor collection. */
+        size_t numHeaps = dvmHeapSourceGetNumHeaps();
+        dvmHeapSourceGetRegions(base, max, numHeaps);
+        basePtr = base[0];
+        endPtr = max[0];
+    } else {
+        basePtr = ctx->bitmap->base;
+        endPtr = ctx->bitmap->max;
+    }
+
+    dvmHeapBitmapScanWalk(ctx->bitmap, basePtr, endPtr, scanBitmapCallback, ctx);
+#else
     /* The bitmaps currently have bits set for the root set.
      * Walk across the bitmaps and scan each object.
      */
     dvmHeapBitmapScanWalk(ctx->bitmap, scanBitmapCallback, ctx);
+#endif
 
     ctx->finger = (void *)ULONG_MAX;
 
@@ -863,14 +928,33 @@ static void sweepBitmapCallback(size_t numPtrs, void **ptrs, void *arg)
 {
     assert(arg != NULL);
     SweepContext *ctx = (SweepContext *)arg;
+
+    /* refresh number of allocated objects */
+    dvmHeapSourceCountFree(numPtrs,ptrs);
+    ctx->numObjects += numPtrs;
+
+#if WITH_TLA
+    /* sweep local objects from the list */
+    numPtrs = dvmTLHeapSourceFreeList(numPtrs, ptrs,ctx->isConcurrent);
+    if (numPtrs != 0){
+        if (ctx->isConcurrent == true) {
+            dvmLockHeap();
+        }
+        /* sweep global objects from the list */
+        ctx->numBytes += dvmHeapSourceFreeList(numPtrs, ptrs);
+        if (ctx->isConcurrent  == true) {
+            dvmUnlockHeap();
+        }
+    }
+#else
     if (ctx->isConcurrent) {
         dvmLockHeap();
     }
     ctx->numBytes += dvmHeapSourceFreeList(numPtrs, ptrs);
-    ctx->numObjects += numPtrs;
     if (ctx->isConcurrent) {
         dvmUnlockHeap();
     }
+#endif
 }
 
 /*

@@ -305,6 +305,23 @@ char* dvmCreateCstrFromString(const StringObject* jstr)
     return newStr;
 }
 
+void dvmConvertStringToCstr(const StringObject* jstr, char* cstr, int lenMax)
+{
+    if (gDvm.classJavaLangString == 0 || jstr == 0 || lenMax == 0 || cstr == 0) {
+        return;
+    }
+
+    int fieldLen = dvmGetFieldInt(jstr, STRING_FIELDOFF_COUNT);
+    int offset = dvmGetFieldInt(jstr, STRING_FIELDOFF_OFFSET);
+
+    ArrayObject* chars = (ArrayObject*) dvmGetFieldObject(jstr, STRING_FIELDOFF_VALUE);
+    const u2* data = (const u2*)(void*)chars->contents + offset;
+
+    int len = MIN(fieldLen, lenMax-1);
+
+    convertUtf16ToUtf8(cstr, data, len);
+}
+
 void dvmGetStringUtfRegion(const StringObject* jstr,
         int start, int len, char* buf)
 {

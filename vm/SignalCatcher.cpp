@@ -34,6 +34,47 @@
 
 static void* signalCatcherThreadStart(void* arg);
 
+/**
+ * @brief signals handler to implement 'ignore' semantic.
+ * Do nothing.
+ * @param signal signal number
+ */
+void ignHandler(int signal) {
+}
+
+/**
+ * @brief Ignore fatal signals after System.exit()
+ * @details Java spec does not specify VM behavior after System.exit() call.
+ * Therefore we legaly ignore fatal signals on VM shutdown phase after
+ * System.exit() was called to avoid unneeded tombstones
+ * CAUTION! This function should be called with care because it can
+ * potentially harm Dalvik behaviour if called in unappropriate place
+ * E.g. in case of signal based optimizations
+ */
+void dvmIgnoreSignalsOnVMExit(void)
+{
+    if (gDvm.disableVMExitErrorsElimination == true) {
+        return;
+    }
+
+    ALOGI("System.exit() call: started ignoring fatal signals");
+
+    /* Ignore fatal signals after System.exit()
+     * Now it implemented as user's handler because the SIG_IGN
+     * works for the method 'kill' only. I.e. mentioned signals
+     * will be ignored in the case of call 'kill(pid, SIGSEGV)'.
+     * But the SIGSEGV will be passed to default signal handler
+     * in the case of illegal memory access, for example.
+     */
+    signal(SIGSEGV, ignHandler);
+    signal(SIGILL,  ignHandler);
+    signal(SIGABRT, ignHandler);
+    signal(SIGBUS,  ignHandler);
+    signal(SIGIOT,  ignHandler);
+    signal(SIGFPE,  ignHandler);
+    signal(SIGPIPE, ignHandler);
+}
+
 /*
  * Crank up the signal catcher thread.
  *
@@ -114,12 +155,18 @@ static void logThreadStacks(FILE* fp)
 #else
     ptm = localtime(&now);
 #endif
-    dvmPrintDebugMessage(&target,
-        "\n\n----- pid %d at %04d-%02d-%02d %02d:%02d:%02d -----\n",
-        pid, ptm->tm_year + 1900, ptm->tm_mon+1, ptm->tm_mday,
-        ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
+    if (ptm != NULL) {
+        dvmPrintDebugMessage(&target,
+                "\n\n----- pid %d at %04d-%02d-%02d %02d:%02d:%02d -----\n",
+                pid, ptm->tm_year + 1900, ptm->tm_mon+1, ptm->tm_mday,
+                ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
+    } else {
+        dvmPrintDebugMessage(&target,
+                "\n\n----- pid %d at unknown time -----\n", pid);
+    }
     printProcessName(&target);
     dvmPrintDebugMessage(&target, "\n");
+    dvmDumpJniStats(&target);
     dvmDumpAllThreadsEx(&target, true);
     fprintf(fp, "----- end %d -----\n", pid);
 }
@@ -151,6 +198,7 @@ static void handleSigQuit()
         /* just dump to log */
         DebugOutputTarget target;
         dvmCreateLogOutputTarget(&target, ANDROID_LOG_INFO, LOG_TAG);
+        dvmDumpJniStats(&target);
         dvmDumpAllThreadsEx(&target, true);
     } else {
         /* write to memory buffer */
@@ -189,7 +237,7 @@ static void handleSigQuit()
             ALOGE("Unable to open stack trace file '%s': %s",
                 gDvm.stackTraceFile, strerror(errno));
         } else {
-            ssize_t actual = write(fd, traceBuf, traceLen);
+            ssize_t actual = TEMP_FAILURE_RETRY(write(fd, traceBuf, traceLen));
             if (actual != (ssize_t) traceLen) {
                 ALOGE("Failed to write stack traces to %s (%d of %zd): %s",
                     gDvm.stackTraceFile, (int) actual, traceLen,
@@ -239,6 +287,14 @@ static void handleSigUsr2()
         dvmCompilerDumpStats();
         /* Stress-test unchain all */
         dvmJitUnchainAll();
+
+        /* Dump method cfg with execution count of each edge in method profile mode */
+        if (gDvmJit.methodProfTable != NULL) {
+            dvmHashTableLock(gDvmJit.methodProfTable);
+            dvmHashForeach(gDvmJit.methodProfTable, dvmCompilerDumpMethodCFGHandle, NULL);
+            dvmHashTableUnlock(gDvmJit.methodProfTable);
+        }
+
         ALOGD("Send %d more signals to reset the code cache",
              codeCacheResetCount & 7);
     }

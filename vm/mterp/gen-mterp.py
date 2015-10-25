@@ -262,6 +262,8 @@ def getOpcodeList():
 def emitAlign():
     if style == "computed-goto":
         asm_fp.write("    .balign %d\n" % handler_size_bytes)
+    if style == "jump-table":
+        asm_fp.write("    .balign 16\n")
 
 #
 # Load and emit opcodes for all kNumPackedOpcodes instructions.

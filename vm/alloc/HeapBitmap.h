@@ -112,8 +112,14 @@ void dvmHeapBitmapWalk(const HeapBitmap *bitmap,
  * Like dvmHeapBitmapWalk but takes a callback function with a finger
  * address.
  */
+#ifdef WITH_REGION_GC
+void dvmHeapBitmapScanWalk(HeapBitmap *bitmap,
+                           uintptr_t base, uintptr_t max,
+                           BitmapScanCallback *callback, void *arg);
+#else
 void dvmHeapBitmapScanWalk(HeapBitmap *bitmap,
                            BitmapScanCallback *callback, void *arg);
+#endif
 
 /*
  * Walk through the bitmaps in increasing address order, and find the

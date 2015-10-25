@@ -127,6 +127,20 @@ extern InstructionInfoTables gDexOpcodeInfo;
  * Holds the contents of a decoded instruction.
  */
 struct DecodedInstruction {
+
+    /**
+     * @brief Constructor for initializing a decoded instruction
+     */
+    DecodedInstruction (void) :
+            vA (0), vB (0), vB_wide (0L), vC (0), opcode (OP_NOP), indexType (kIndexUnknown)
+    {
+        //Set all arguments to 0
+        for (int i = 0; i < 5; i++)
+        {
+            arg[i] = 0;
+        }
+    }
+
     u4      vA;
     u4      vB;
     u8      vB_wide;        /* for kFmt51l */
@@ -191,5 +205,12 @@ DEX_INLINE InstructionIndexType dexGetIndexTypeFromOpcode(Opcode opcode)
  * Decode the instruction pointed to by "insns".
  */
 void dexDecodeInstruction(const u2* insns, DecodedInstruction* pDec);
+
+/*
+ * Given a decoded instruction representing a const bytecode, it updates
+ * the out arguments with proper values as dictated by the constant bytecode.
+ */
+bool dexGetConstant (const DecodedInstruction &dInsn, int &lowConst,
+        int &highConst, bool &wide);
 
 #endif  // LIBDEX_INSTRUTILS_H_

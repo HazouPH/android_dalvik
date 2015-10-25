@@ -40,15 +40,26 @@ endif
 host_smp_flag := -DANDROID_SMP=1
 
 # Build the installed version (libdvm.so) first
+WITH_JIT := true
 include $(LOCAL_PATH)/ReconfigureDvm.mk
 
+ifeq ($(dvm_arch_variant),x86)
+  $(info [TARGET] Building with x86 fast interpreter)
+  ifeq ($(BOARD_HAVE_SMALL_RAM),true)
+    LOCAL_CFLAGS += -DMTERP_STUB
+  else
+    LOCAL_CFLAGS += -DMTERP_STUB \
+                    -fno-pic \
+                    -fno-pie
+  endif
+endif
+ifeq ($(WITH_JIT),true)
+  $(info [TARGET] Building with JIT)
+endif
+
 # Overwrite default settings
-LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := libdvm
 LOCAL_CFLAGS += $(target_smp_flag)
-ifeq ($(TARGET_ARCH_LOWMEM),true)
-    LOCAL_CFLAGS += -DDALVIK_LOWMEM
-endif
 
 # Define WITH_ADDRESS_SANITIZER to build an ASan-instrumented version of the
 # library in /system/lib/asan/libdvm.so.
@@ -58,48 +69,47 @@ ifneq ($(strip $(WITH_ADDRESS_SANITIZER)),)
     LOCAL_CFLAGS := $(filter-out $(CLANG_CONFIG_UNKNOWN_CFLAGS),$(LOCAL_CFLAGS))
 endif
 
+# TODO: split out the asflags.
+LOCAL_ASFLAGS := $(LOCAL_CFLAGS)
+
 include $(BUILD_SHARED_LIBRARY)
 
-# If WITH_JIT is configured, build multiple versions of libdvm.so to facilitate
-# correctness/performance bugs triage
-ifeq ($(WITH_JIT),true)
+# Derivation #1
+# Enable assertions and JIT tuning
+include $(LOCAL_PATH)/ReconfigureDvm.mk
+LOCAL_CFLAGS += -UNDEBUG -DDEBUG=1 -DLOG_NDEBUG=1 -DWITH_DALVIK_ASSERT \
+                -DWITH_JIT_TUNING $(target_smp_flag)
+# TODO: split out the asflags.
+LOCAL_ASFLAGS := $(LOCAL_CFLAGS)
+LOCAL_MODULE := libdvm_assert
+include $(BUILD_SHARED_LIBRARY)
 
-    # Derivation #1
-    # Enable assert and JIT tuning
-    include $(LOCAL_PATH)/ReconfigureDvm.mk
+ifneq ($(dvm_arch),mips)    # MIPS support for self-verification is incomplete
 
-    # Enable assertions and JIT-tuning
-    LOCAL_CFLAGS += -UNDEBUG -DDEBUG=1 -DLOG_NDEBUG=1 -DWITH_DALVIK_ASSERT \
-                    -DWITH_JIT_TUNING $(target_smp_flag)
-    LOCAL_MODULE := libdvm_assert
-    include $(BUILD_SHARED_LIBRARY)
-
-  ifneq ($(dvm_arch),mips)    # MIPS support for self-verification is incomplete
     # Derivation #2
-    # Enable assert and self-verification
-    include $(LOCAL_PATH)/ReconfigureDvm.mk
-
     # Enable assertions and JIT self-verification
+    include $(LOCAL_PATH)/ReconfigureDvm.mk
     LOCAL_CFLAGS += -UNDEBUG -DDEBUG=1 -DLOG_NDEBUG=1 -DWITH_DALVIK_ASSERT \
-                    -DWITH_SELF_VERIFICATION $(target_smp_flag)
+                    $(target_smp_flag)
+    ifeq ($(WITH_JIT),true)
+      LOCAL_CFLAGS += -DWITH_SELF_VERIFICATION
+    endif
+    # TODO: split out the asflags.
+    LOCAL_ASFLAGS := $(LOCAL_CFLAGS)
     LOCAL_MODULE := libdvm_sv
     include $(BUILD_SHARED_LIBRARY)
-  endif # dvm_arch!=mips
 
-    # Derivation #3
-    # Compile out the JIT
-    WITH_JIT := false
-    include $(LOCAL_PATH)/ReconfigureDvm.mk
+endif # dvm_arch!=mips
 
-    LOCAL_CFLAGS += $(target_smp_flag)
-    LOCAL_MODULE := libdvm_interp
-    include $(BUILD_SHARED_LIBRARY)
-
-  ifeq ($(dvm_arch),x86)    # For x86, we enable JIT on host too
-    # restore WITH_JIT = true for host dalvik build
-    WITH_JIT := true
-  endif # dvm_arch==x86
-endif
+# Derivation #3
+# Compile out the JIT
+WITH_JIT := false
+include $(LOCAL_PATH)/ReconfigureDvm.mk
+LOCAL_CFLAGS += $(target_smp_flag)
+# TODO: split out the asflags.
+LOCAL_ASFLAGS := $(LOCAL_CFLAGS)
+LOCAL_MODULE := libdvm_interp
+include $(BUILD_SHARED_LIBRARY)
 
 #
 # Build for the host.
@@ -115,14 +125,19 @@ ifeq ($(WITH_HOST_DALVIK),true)
     # Note: HOST_ARCH_VARIANT isn't defined.
     dvm_arch_variant := $(HOST_ARCH)
 
-    # We always want the x86 JIT.
-    ifeq ($(dvm_arch),x86)
-        WITH_JIT := true
-    endif
+    WITH_JIT := true
 
     include $(LOCAL_PATH)/Dvm.mk
 
-    LOCAL_SHARED_LIBRARIES += libcrypto libssl libicuuc libicui18n
+    ifeq ($(dvm_arch_variant),x86)
+      $(info [HOST] Building with x86 fast interpreter)
+      LOCAL_CFLAGS += -DMTERP_STUB
+    endif
+    ifeq ($(WITH_JIT),true)
+      $(info [HOST] Building with JIT)
+    endif
+
+    LOCAL_SHARED_LIBRARIES += libnativehelper libcrypto-host libssl-host libicuuc-host libicui18n-host
 
     LOCAL_LDLIBS := -lpthread -ldl
     ifeq ($(HOST_OS),linux)
@@ -146,8 +161,13 @@ ifeq ($(WITH_HOST_DALVIK),true)
     endif
 
     LOCAL_CFLAGS += $(host_smp_flag)
-    ifeq ($(TARGET_ARCH_LOWMEM),true)
-        LOCAL_CFLAGS += -DDALVIK_LOWMEM
+    # TODO: split out the asflags.
+    LOCAL_ASFLAGS := $(LOCAL_CFLAGS)
+    # To enable assert in host mode, uncomment the following line
+    # LOCAL_CFLAGS += -UNDEBUG -DDEBUG=1 -DLOG_NDEBUG=1 -DWITH_DALVIK_ASSERT -DWITH_JIT_TUNING
+    LOCAL_CFLAGS += -Wa,--noexecstack
+    ifeq ($(HOST_ARCH),x86)
+        LOCAL_CFLAGS += -mmmx -msse
     endif
     LOCAL_MODULE_TAGS := optional
     LOCAL_MODULE := libdvm

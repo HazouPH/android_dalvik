@@ -1,5 +1,5 @@
 
-%default { "store":"movl", "reg":"rINST", "sqnum":"0" }
+%default { "store":"movl", "reg":"rINST", "sqnum":"0"}
 %verify "executed"
 %verify "null object"
 %verify "field already resolved"
@@ -47,7 +47,7 @@
     movl    offInstField_byteOffset(%eax),%eax   # eax<- byte offset of field
     testl   %ecx,%ecx                            # object null?
     je      common_errNullObject                 # object was null
-    $store   $reg,(%ecx,%eax,1)            # obj.field <- v[A](8/16/32 bits)
+    $store   $reg,(%ecx,%eax,1)                 # obj.field <- v[A](8/16/32 bits)
     FETCH_INST_OPCODE 2 %ecx
     UNSPILL(rIBASE)
     ADVANCE_PC 2

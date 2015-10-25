@@ -435,6 +435,9 @@ void dumpFileHeader(const DexFile* pDexFile)
     printf("type_ids_size       : %d\n", pHeader->typeIdsSize);
     printf("type_ids_off        : %d (0x%06x)\n",
         pHeader->typeIdsOff, pHeader->typeIdsOff);
+    printf("proto_ids_size       : %d\n", pHeader->protoIdsSize);
+    printf("proto_ids_off        : %d (0x%06x)\n",
+        pHeader->protoIdsOff, pHeader->protoIdsOff);
     printf("field_ids_size      : %d\n", pHeader->fieldIdsSize);
     printf("field_ids_off       : %d (0x%06x)\n",
         pHeader->fieldIdsOff, pHeader->fieldIdsOff);
@@ -787,6 +790,7 @@ static char* indexString(DexFile* pDexFile,
                 outSize = snprintf(buf, bufSize, "%s.%s:%s // method@%0*x",
                         methInfo.classDescriptor, methInfo.name,
                         methInfo.signature, width, index);
+                free((void *) methInfo.signature);
             } else {
                 outSize = snprintf(buf, bufSize, "<method?> // method@%0*x",
                         width, index);
@@ -1069,6 +1073,7 @@ void dumpBytecodes(DexFile* pDexFile, const DexMethod* pDexMethod)
     printf("%06x:                                        |[%06x] %s.%s:%s\n",
         startAddr, startAddr,
         className, methInfo.name, methInfo.signature);
+    free((void *) methInfo.signature);
 
     insnIdx = 0;
     while (insnIdx < (int) pCode->insnsSize) {

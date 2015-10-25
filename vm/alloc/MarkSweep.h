@@ -49,7 +49,11 @@ struct GcMarkContext {
 bool dvmHeapBeginMarkStep(bool isPartial);
 void dvmHeapMarkRootSet(void);
 void dvmHeapReMarkRootSet(void);
+#ifdef WITH_REGION_GC
+void dvmHeapScanMarkedObjects(bool isPartial);
+#else
 void dvmHeapScanMarkedObjects(void);
+#endif
 void dvmHeapReScanMarkedObjects(void);
 void dvmHeapProcessReferences(Object **softReferences, bool clearSoftRefs,
                               Object **weakReferences,
@@ -60,5 +64,7 @@ void dvmHeapSweepSystemWeaks(void);
 void dvmHeapSweepUnmarkedObjects(bool isPartial, bool isConcurrent,
                                  size_t *numObjects, size_t *numBytes);
 void dvmEnqueueClearedReferences(Object **references);
-
+#ifdef WITH_REGION_GC
+void dvmSetEnableCrossHeapPointerCheck(bool status);
+#endif //WITH_REGION_GC
 #endif  // DALVIK_ALLOC_MARK_SWEEP_H_

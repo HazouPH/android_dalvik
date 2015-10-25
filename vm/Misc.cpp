@@ -252,18 +252,108 @@ std::string dvmHumanReadableDescriptor(const char* descriptor) {
     // or "primitive;". Rewrite the type with '.' instead of '/':
     std::string result;
     const char* p = c;
-    while (*p != ';') {
-        char ch = *p++;
+    while (*p != ';' && *p != '\0') {
+        char ch = *p;
+
+        p++;
         if (ch == '/') {
-          ch = '.';
+            ch = '.';
         }
         result.push_back(ch);
     }
+
+    // All descriptors have to be terminated by symbol ';'
+    assert(*p != '\0');
+
     // ...and replace the semicolon with 'dim' "[]" pairs:
     while (dim--) {
         result += "[]";
     }
     return result;
+}
+
+void dvmHumanReadableDescriptor(const char* descriptor, char *dst, int lenMax) {
+
+    if(descriptor == 0 || dst == 0 || lenMax == 0) {
+        return;
+    }
+
+    if(lenMax == 1)
+    {
+        *dst = '\0';
+        return;
+    }
+
+    // Count the number of '['s to get the dimensionality.
+    const char* c = descriptor;
+    size_t dim = 0;
+    while (*c == '[') {
+        dim++;
+        c++;
+    }
+
+    // Reference or primitive?
+    if (*c == 'L') {
+        // "[[La/b/C;" -> "a.b.C[][]".
+        c++; // Skip the 'L'.
+    } else {
+        // "[[B" -> "byte[][]".
+        // To make life easier, we make primitives look like unqualified
+        // reference types.
+        switch (*c) {
+        case 'B': c = "byte;"; break;
+        case 'C': c = "char;"; break;
+        case 'D': c = "double;"; break;
+        case 'F': c = "float;"; break;
+        case 'I': c = "int;"; break;
+        case 'J': c = "long;"; break;
+        case 'S': c = "short;"; break;
+        case 'Z': c = "boolean;"; break;
+        default:
+                if(lenMax > 1)
+                {
+                    int len;
+                    len = strlen(descriptor);
+                    len = MIN(len, lenMax - 1);
+                    strncpy(dst, descriptor, len);
+                    dst[len]=0;
+                }
+                else if(lenMax == 1)
+                {
+                    *dst = '\0';
+                }
+                return;
+        }
+    }
+
+    // At this point, 'c' is a string of the form "fully/qualified/Type;"
+    // or "primitive;". Rewrite the type with '.' instead of '/':
+    const char* p = c;
+    int cnt = 0;
+    while (*p != ';' && *p != '\0' && cnt < lenMax - 1) {
+        char ch = *p;
+
+        p++;
+        if (ch == '/') {
+            ch = '.';
+        }
+        dst[cnt] = ch;
+        cnt++;
+    }
+
+    // All descriptors have to be terminated by symbol ';'
+    assert(*p != '\0');
+
+    // ...and replace the semicolon with 'dim' "[]" pairs:
+    while (dim-- && cnt < lenMax - 1) {
+        dst[cnt] = '[';
+        cnt++;
+        if(cnt >= lenMax - 1)
+            break;
+        dst[cnt] = ']';
+        cnt++;
+    }
+    dst[cnt] = '\0';
 }
 
 std::string dvmHumanReadableType(const Object* obj)
@@ -296,7 +386,7 @@ std::string dvmHumanReadableField(const Field* field)
 
 std::string dvmHumanReadableMethod(const Method* method, bool withSignature)
 {
-    if (method == NULL) {
+    if (method == 0) {
         return "(null)";
     }
     std::string result(dvmHumanReadableDescriptor(method->clazz->descriptor));
@@ -309,6 +399,41 @@ std::string dvmHumanReadableMethod(const Method* method, bool withSignature)
         free(signature);
     }
     return result;
+}
+
+void dvmHumanReadableMethodWithOutSignature(const Method* method, char *dst, int lenMax)
+{
+    int len, delta;
+
+    if(dst == 0 || lenMax == 0) {
+        return;
+    }
+
+    if(lenMax == 1)
+    {
+        *dst = '\0';
+        return;
+    }
+
+    if (method == 0) {
+        const char buf[] = "(null)";
+        len = MIN((int )(sizeof(buf) - 1), lenMax - 1);
+        strncpy(dst, buf, len);
+        dst[len] = 0;
+        return;
+    }
+
+    dvmHumanReadableDescriptor(method->clazz->descriptor, dst, lenMax);
+    len = (int )strlen(dst);
+    delta = (lenMax - 1) - (len + 1);
+    if(delta > 0)
+    {
+        dst[len] = '.';
+        delta = MIN(delta, (int )strlen(method->name));
+        strncpy(&dst[len + 1], method->name, delta);
+        dst[len + 1 + delta] = 0;
+    }
+    return;
 }
 
 /*
@@ -513,11 +638,11 @@ u8 dvmGetOtherThreadCpuTimeNsec(pthread_t thread)
 bool dvmIterativeSleep(int iteration, int maxTotalSleep, u8 relStartTime)
 {
     /*
-     * Minimum sleep is one millisecond, it is important to keep this value
+     * Minimum sleep is 100us, it is important to keep this value
      * low to ensure short GC pauses since dvmSuspendAllThreads() uses this
      * function.
      */
-    const int minSleep = 1000;
+    const int minSleepUs = 100;
     u8 curTime;
     int curDelay;
 
@@ -534,14 +659,16 @@ bool dvmIterativeSleep(int iteration, int maxTotalSleep, u8 relStartTime)
     /*
      * Compute current delay.  We're bounded by "maxTotalSleep", so no
      * real risk of overflow assuming "usleep" isn't returning early.
-     * (Besides, 2^30 usec is about 18 minutes by itself.)
+     * (Besides, 2^30 usec is about 1.8 minutes by itself.)
      *
      * For iteration==0 we just call sched_yield(), so the first sleep
-     * at iteration==1 is actually (minSleep * 2).
+     * at iteration==1 is actually (minSleepUs * 2).
      */
-    curDelay = minSleep;
-    while (iteration-- > 0)
+    curDelay = minSleepUs;
+    while (iteration > 0) {
         curDelay *= 2;
+        iteration--;
+    }
     assert(curDelay > 0);
 
     if (curTime + curDelay >= relStartTime + maxTotalSleep) {
@@ -550,7 +677,7 @@ bool dvmIterativeSleep(int iteration, int maxTotalSleep, u8 relStartTime)
         curDelay = (int) ((relStartTime + maxTotalSleep) - curTime);
     }
 
-    if (iteration == 0) {
+    if (curDelay == minSleepUs) {
         LOGVV("exsl: yield");
         sched_yield();
     } else {

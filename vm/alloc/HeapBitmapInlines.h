@@ -17,9 +17,14 @@
 #ifndef DALVIK_HEAP_BITMAPINLINES_H_
 #define DALVIK_HEAP_BITMAPINLINES_H_
 
+#include <cutils/atomic-inline.h>
+
 static unsigned long dvmHeapBitmapSetAndReturnObjectBit(HeapBitmap *hb, const void *obj) __attribute__((used));
 static void dvmHeapBitmapSetObjectBit(HeapBitmap *hb, const void *obj) __attribute__((used));
 static void dvmHeapBitmapClearObjectBit(HeapBitmap *hb, const void *obj) __attribute__((used));
+static unsigned long dvmHeapBitmapIsObjectBitSet(const HeapBitmap *hb,const void *obj) __attribute__((used));
+static void dvmHeapBitmapSetMax(HeapBitmap *hb, uintptr_t max) __attribute__((used));
+static void dvmHeapBitmapSetObjectBitCas(HeapBitmap *hb, const void *obj) __attribute__((used));
 
 /*
  * Internal function; do not call directly.
@@ -101,6 +106,47 @@ static unsigned long dvmHeapBitmapIsObjectBitSet(const HeapBitmap *hb,
         return hb->bits[HB_OFFSET_TO_INDEX(offset)] & HB_OFFSET_TO_MASK(offset);
     } else {
         return 0;
+    }
+}
+
+/*
+ * Sets the max value of the bitmap
+ */
+static void dvmHeapBitmapSetMax(HeapBitmap *hb, uintptr_t max)
+{
+    int32_t*  pmax = (int32_t*) &hb->max;
+    while (android_atomic_cas( (int32_t)(hb->max),(int32_t)max , pmax ) != 0);
+}
+
+/*
+ * Compare and Swap version of dvmHeapBitmapSetObjectBit.
+ * allows concurrent access to bitmap.
+ */
+static void dvmHeapBitmapSetObjectBitCas(HeapBitmap *hb, const void *obj)
+{
+    const uintptr_t offset = (uintptr_t)obj - hb->base;
+    const size_t index = HB_OFFSET_TO_INDEX(offset);
+    const int32_t mask = (int32_t) HB_OFFSET_TO_MASK(offset);
+
+    assert(hb->bits != NULL);
+    assert((uintptr_t)obj >= hb->base);
+    assert(index < hb->bitsLen / sizeof(*hb->bits));
+
+    /* update hb->max if required */
+    volatile int32_t*  pmax = (int32_t*)&hb->max;
+    int32_t max = *pmax;
+    while ((uintptr_t)obj > (uintptr_t)max) {
+        if (android_atomic_cas(max, (int32_t)obj, pmax) == 0) {
+            break;
+        }
+        max = *pmax;
+    }
+
+    /* then set the bit */
+    volatile int32_t *p = (int32_t*)(hb->bits + index);
+    int32_t  word = *p;
+    while (android_atomic_cas(word, word|mask, p) != 0) {
+        word = *p;
     }
 }
 

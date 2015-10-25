@@ -19,25 +19,32 @@ dvm_os := $(TARGET_OS)
 dvm_arch := $(TARGET_ARCH)
 dvm_arch_variant := $(TARGET_ARCH_VARIANT)
 
-# for single arch-variant if x86
-ifeq ($(dvm_arch),x86)
-  dvm_arch_variant := x86
+# Disable x86-atom or x86-slm variant
+ifneq (, $(findstring x86-, $(dvm_arch_variant)))
+dvm_arch_variant := x86
+endif
+
+# Use DALVIK_FI to make change to FI build version.
+ifeq ($(TARGET_ARCH),x86)
+    ifeq ($(DALVIK_FI),x86)
+        dvm_arch_variant := $(DALVIK_FI)
+    endif
 endif
 
 include $(LOCAL_PATH)/Dvm.mk
 
+LOCAL_SHARED_LIBRARIES += \
+	libcorkscrew \
+	libcutils \
+	libdl \
+	liblog \
+	libnativehelper \
+	libselinux \
+	libz
+
 ifeq ($(INTEL_HOUDINI),true)
     LOCAL_CFLAGS += -DWITH_HOUDINI
 endif
-
-LOCAL_SHARED_LIBRARIES += liblog libcutils libnativehelper libz libdl libcorkscrew
-
-ifeq ($(HAVE_SELINUX),true)
-LOCAL_C_INCLUDES += external/libselinux/include
-LOCAL_SHARED_LIBRARIES += libselinux
-LOCAL_CFLAGS += -DHAVE_SELINUX
-endif # HAVE_SELINUX
-
 LOCAL_STATIC_LIBRARIES += libdex
 
 ifeq ($(INTEL_HOUDINI),true)

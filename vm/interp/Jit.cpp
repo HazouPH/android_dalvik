@@ -237,6 +237,7 @@ static void selfVerificationDumpTrace(const u2* pc, Thread* self)
 static void selfVerificationSpinLoop(ShadowSpace *shadowSpace)
 {
     const u2 *startPC = shadowSpace->startPC;
+    ALOGD("******  SV SPIN LOOP Entry  ******");
     JitTraceDescription* desc = dvmCopyTraceDescriptor(startPC, NULL);
     if (desc) {
         dvmCompilerWorkEnqueue(startPC, kWorkOrderTraceDebug, desc);
@@ -245,8 +246,8 @@ static void selfVerificationSpinLoop(ShadowSpace *shadowSpace)
          * freeing the desc pointer when the enqueuing fails is acceptable.
          */
     }
-    gDvmJit.selfVerificationSpin = true;
-    while(gDvmJit.selfVerificationSpin) sleep(10);
+    volatile bool spin = gDvmJit.selfVerificationSpin;
+    while(spin) sleep(10);
 }
 
 /*
@@ -306,7 +307,8 @@ void dvmCheckSelfVerification(const u2* pc, Thread* self)
             if (state == kSVSBackwardBranch) {
                 /* State mismatch on backward branch - try one more iteration */
                 shadowSpace->selfVerificationState = kSVSDebugInterp;
-                goto log_and_continue;
+                if (!gDvmJit.selfVerificationSpin)
+                    goto log_and_continue;
             }
             ALOGD("~~~ DbgIntp(%d): REGISTERS DIVERGENCE!", self->threadId);
             selfVerificationDumpState(pc, self);
@@ -339,7 +341,8 @@ void dvmCheckSelfVerification(const u2* pc, Thread* self)
                      * iteration.
                      */
                     shadowSpace->selfVerificationState = kSVSDebugInterp;
-                    goto log_and_continue;
+                    if (!gDvmJit.selfVerificationSpin)
+                        goto log_and_continue;
                 }
                 ALOGD("~~~ DbgIntp(%d): REGISTERS (FRAME2) DIVERGENCE!",
                     self->threadId);
@@ -372,10 +375,11 @@ void dvmCheckSelfVerification(const u2* pc, Thread* self)
                      * iteration.
                      */
                     shadowSpace->selfVerificationState = kSVSDebugInterp;
-                    goto log_and_continue;
+                    if (!gDvmJit.selfVerificationSpin)
+                        goto log_and_continue;
                 }
                 ALOGD("~~~ DbgIntp(%d): MEMORY DIVERGENCE!", self->threadId);
-                ALOGD("Addr: %#x Intrp Data: %#x Jit Data: %#x",
+                ALOGD("Addr: %#x Intrp Data: %d Jit Data: %d",
                     heapSpacePtr->addr, memData, heapSpacePtr->data);
                 selfVerificationDumpState(pc, self);
                 selfVerificationDumpTrace(pc, self);
@@ -409,6 +413,7 @@ void dvmCheckSelfVerification(const u2* pc, Thread* self)
 log_and_continue:
     /* If end not been reached, make sure max length not exceeded */
     if (shadowSpace->traceLength >= JIT_MAX_TRACE_LEN) {
+        ALOGD("~~~ DbgIntp JIT_MAX_TRACE_LEN(%d) exceeded", JIT_MAX_TRACE_LEN);
         ALOGD("~~~ DbgIntp(%d): CONTROL DIVERGENCE!", self->threadId);
         ALOGD("startPC: %#x endPC: %#x currPC: %#x",
             (int)shadowSpace->startPC, (int)shadowSpace->endPC, (int)pc);
@@ -449,6 +454,7 @@ void dvmJitStopTranslationRequests()
 /* Convenience function to increment counter from assembly code */
 void dvmBumpNoChain(int from)
 {
+    assert (from < kNoChainExitLast);
     gDvmJit.noChainExit[from]++;
 }
 
@@ -791,9 +797,10 @@ void dvmCheckJit(const u2* pc, Thread* self)
     self->lastPC = pc;
 
     switch (self->jitState) {
-        int offset;
-        DecodedInstruction decInsn;
-        case kJitTSelect:
+        case kJitTSelect: {
+            int offset;
+            DecodedInstruction decInsn;
+
             /* First instruction - just remember the PC and exit */
             if (lastPC == NULL) break;
             /* Grow the trace around the last PC if jitState is kJitTSelect */
@@ -819,13 +826,23 @@ void dvmCheckJit(const u2* pc, Thread* self)
                 break;
             }
 
+            offset = lastPC - self->traceMethod->insns;
+            if (offset < 0 || offset > 0xFFFF)
+            {
+#if defined(SHOW_TRACE)
+                ALOGD("TraceGen: ending on %s, too big offset %x",
+                     dexGetOpcodeName(decInsn.opcode), offset);
+#endif
+                self->jitState = kJitTSelectEnd;
+                break;
+            }
+
 #if defined(SHOW_TRACE)
             ALOGD("TraceGen: adding %s. lpc:%#x, pc:%#x",
                  dexGetOpcodeName(decInsn.opcode), (int)lastPC, (int)pc);
 #endif
             flags = dexGetFlagsFromOpcode(decInsn.opcode);
             len = dexGetWidthFromInstruction(lastPC);
-            offset = lastPC - self->traceMethod->insns;
             assert((unsigned) offset <
                    dvmGetMethodInsnsSize(self->traceMethod));
             if (lastPC != self->currRunHead + self->currRunLen) {
@@ -903,7 +920,8 @@ void dvmCheckJit(const u2* pc, Thread* self)
                     stayOneMoreInst = true;
                 }
             }
-            /* NOTE: intentional fallthrough for returns */
+        }
+        /* NOTE: intentional fallthrough for returns */
         case kJitTSelectEnd:
             {
                 /* Empty trace - set to bail to interpreter */
@@ -1131,7 +1149,20 @@ void dvmJitSetCodeAddr(const u2* dPC, void *nPC, JitInstructionSetType set,
     JitEntry *jitEntry = isMethodEntry ?
         lookupAndAdd(dPC, false /* caller holds tableLock */, isMethodEntry) :
                      dvmJitFindEntry(dPC, isMethodEntry);
-    assert(jitEntry);
+    /*
+     * The 'NULL' is valid return code for both methods 'lookupAndAdd' and
+     * 'dvmJitFindEntry'. But 'lookupAndAdd' insert missed address if no one in
+     * the table and return 'NULL' value for full table only while method
+     * 'dvmJitFindEntry' does not implement 'add' functionality.
+     * In the case when code cache buffer reset occurred between events "place is
+     * locked in the JitTable" and "trace compilation is finished" no JitEntry will
+     * be available in the table. In this case method dvmJitFindEntry returns NULL
+     * and no code is registering.
+     */
+    if (jitEntry == NULL) {
+        return;
+    }
+
     /* Note: order of update is important */
     do {
         oldValue = jitEntry->u;
@@ -1250,9 +1281,17 @@ void dvmJitCheckTraceRequest(Thread* self)
                 /* In progress - nothing do do */
                self->jitState = kJitDone;
             } else {
+                /* the method lookupAndAdd may take some time to grab the lock
+                 * During this waitin the current thread may be marked as waiting
+                 * VM resources
+                 */
+                ThreadStatus oldThreadStatus = dvmChangeStatus(NULL, THREAD_VMWAIT);
+                dvmLockMutex(&gDvmJit.tableLock);
                 JitEntry *slot = lookupAndAdd(self->interpSave.pc,
-                                              false /* lock */,
+                                              true /* lock */,
                                               false /* method entry */);
+                dvmUnlockMutex(&gDvmJit.tableLock);
+                dvmChangeStatus(NULL, oldThreadStatus);
                 if (slot == NULL) {
                     /*
                      * Table is full.  This should have been

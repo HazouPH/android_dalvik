@@ -1605,7 +1605,7 @@ static void scavengeThreadStack(Thread *thread)
 
             //LOG_SCAV("PGC: %s.%s", method->clazz->descriptor, method->name);
 
-            if (pMap != NULL) {
+            if (gDvm.preciseGc && pMap != NULL) {
                 /* found map, get registers for this address */
                 int addr = saveArea->xtra.currentPc - method->insns;
                 regVector = dvmRegisterMapGetLine(pMap, addr);

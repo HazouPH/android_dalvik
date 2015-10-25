@@ -345,7 +345,7 @@ static void adbStateShutdown(struct JdwpNetState* netState)
 
     if (netState->wakeFds[1] >= 0) {
         ALOGV("+++ writing to wakePipe");
-        write(netState->wakeFds[1], "", 1);
+        TEMP_FAILURE_RETRY(write(netState->wakeFds[1], "", 1));
     }
 }
 
@@ -430,7 +430,7 @@ static bool handlePacket(JdwpState* state)
     JdwpReqHeader hdr;
     u4 length, id;
     u1 flags, cmdSet, cmd;
-//    u2 error;
+    u2 error;
     bool reply;
     int dataLen;
 
@@ -441,7 +441,7 @@ static bool handlePacket(JdwpState* state)
     flags = read1(&buf);
     if ((flags & kJDWPFlagReply) != 0) {
         reply = true;
-        /*error =*/ read2BE(&buf);
+        error = read2BE(&buf);
     } else {
         reply = false;
         cmdSet = read1(&buf);
@@ -629,8 +629,8 @@ static bool processIncoming(JdwpState* state)
         }
 
         errno = 0;
-        cc = write(netState->clientSock, netState->inputBuffer,
-                kMagicHandshakeLen);
+        cc = TEMP_FAILURE_RETRY(write(netState->clientSock, netState->inputBuffer,
+                                      kMagicHandshakeLen));
         if (cc != kMagicHandshakeLen) {
             ALOGE("Failed writing handshake bytes: %s (%d of %d)",
                 strerror(errno), cc, (int) kMagicHandshakeLen);

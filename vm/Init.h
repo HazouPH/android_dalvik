@@ -69,4 +69,32 @@ int dvmFprintf(FILE* fp, const char* format, ...)
 #endif
     ;
 
+#ifdef WITH_JIT
+/*
+ * Does a backend option exist?
+ * Returns if key is found
+ */
+bool dvmBackendOptionExists (const char *key);
+
+/*
+ * Retrieve a backend option as a string
+ * Updates the value parameter if found
+ * Returns if key is found
+ */
+bool dvmExtractBackendOption (const char *key, std::string &value);
+
+/*
+ * Retrieve a backend option as an char*
+ * Updates the value parameter if found
+ * Returns if key is found
+ */
+bool dvmExtractBackendOption (const char *key, const char **value);
+
+/*
+ * Retrieve a backend option as an integer
+ * Updates the value parameter if found
+ * Returns if key is found
+ */
+bool dvmExtractBackendOption (const char *key, int* value);
+#endif
 #endif  // DALVIK_INIT_H_

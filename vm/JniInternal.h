@@ -25,6 +25,8 @@
 bool dvmJniStartup(void);
 void dvmJniShutdown(void);
 
+bool dvmIsBadJniVersion(int version);
+
 /*
  * Our data structures for JNIEnv and JavaVM.
  *
@@ -161,5 +163,9 @@ void dvmReleaseJniMonitors(Thread* self);
  * The local ref tables associated with other threads are not included.
  */
 void dvmDumpJniReferenceTables(void);
+
+// Dumps JNI statistics in response to SIGQUIT.
+struct DebugOutputTarget;
+void dvmDumpJniStats(DebugOutputTarget* target);
 
 #endif  // DALVIK_JNIINTERNAL_H_

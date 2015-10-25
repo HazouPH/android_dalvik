@@ -89,6 +89,28 @@ MTERP_OFFSET(offDvmDex_pResFields,      DvmDex, pResFields, 20)
 MTERP_OFFSET(offDvmDex_pInterfaceCache, DvmDex, pInterfaceCache, 24)
 
 /* StackSaveArea fields */
+#if defined(WITH_JIT) && defined(ARCH_IA32) && defined(EXTRA_SCRATCH_VR)
+#ifdef EASY_GDB
+MTERP_OFFSET(offStackSaveArea_prevSave, StackSaveArea, prevSave, 16)
+MTERP_OFFSET(offStackSaveArea_prevFrame, StackSaveArea, prevFrame, 20)
+MTERP_OFFSET(offStackSaveArea_savedPc,  StackSaveArea, savedPc, 24)
+MTERP_OFFSET(offStackSaveArea_method,   StackSaveArea, method, 28)
+MTERP_OFFSET(offStackSaveArea_currentPc, StackSaveArea, xtra.currentPc, 32)
+MTERP_OFFSET(offStackSaveArea_localRefCookie, \
+                                        StackSaveArea, xtra.localRefCookie, 32)
+MTERP_OFFSET(offStackSaveArea_returnAddr, StackSaveArea, returnAddr, 36)
+MTERP_SIZEOF(sizeofStackSaveArea,       StackSaveArea, 40)
+#else //ifndef EASY_GDB
+MTERP_OFFSET(offStackSaveArea_prevFrame, StackSaveArea, prevFrame, 16)
+MTERP_OFFSET(offStackSaveArea_savedPc,  StackSaveArea, savedPc, 20)
+MTERP_OFFSET(offStackSaveArea_method,   StackSaveArea, method, 24)
+MTERP_OFFSET(offStackSaveArea_currentPc, StackSaveArea, xtra.currentPc, 28)
+MTERP_OFFSET(offStackSaveArea_localRefCookie, \
+                                        StackSaveArea, xtra.localRefCookie, 28)
+MTERP_OFFSET(offStackSaveArea_returnAddr, StackSaveArea, returnAddr, 32)
+MTERP_SIZEOF(sizeofStackSaveArea,       StackSaveArea, 36)
+#endif //EASY_GDB
+#else // ifndef WITH_JIT || ifndef ARCH_IA32 || ifndef EXTRA_SCRATCH_VR
 #ifdef EASY_GDB
 MTERP_OFFSET(offStackSaveArea_prevSave, StackSaveArea, prevSave, 0)
 MTERP_OFFSET(offStackSaveArea_prevFrame, StackSaveArea, prevFrame, 4)
@@ -99,7 +121,7 @@ MTERP_OFFSET(offStackSaveArea_localRefCookie, \
                                         StackSaveArea, xtra.localRefCookie, 16)
 MTERP_OFFSET(offStackSaveArea_returnAddr, StackSaveArea, returnAddr, 20)
 MTERP_SIZEOF(sizeofStackSaveArea,       StackSaveArea, 24)
-#else
+#else //ifndef EASY_GDB
 MTERP_OFFSET(offStackSaveArea_prevFrame, StackSaveArea, prevFrame, 0)
 MTERP_OFFSET(offStackSaveArea_savedPc,  StackSaveArea, savedPc, 4)
 MTERP_OFFSET(offStackSaveArea_method,   StackSaveArea, method, 8)
@@ -108,7 +130,8 @@ MTERP_OFFSET(offStackSaveArea_localRefCookie, \
                                         StackSaveArea, xtra.localRefCookie, 12)
 MTERP_OFFSET(offStackSaveArea_returnAddr, StackSaveArea, returnAddr, 16)
 MTERP_SIZEOF(sizeofStackSaveArea,       StackSaveArea, 20)
-#endif
+#endif //EASY_GDB
+#endif //WITH_JIT && ARCH_IA32 && EXTRA_SCRATCH_VR
 
   /* ShadowSpace fields */
 #if defined(WITH_JIT) && defined(WITH_SELF_VERIFICATION)
@@ -173,7 +196,10 @@ MTERP_OFFSET(offThread_curHandlerTable, \
 MTERP_OFFSET(offThread_suspendCount,      Thread, suspendCount, 48);
 MTERP_OFFSET(offThread_dbgSuspendCount,   Thread, dbgSuspendCount, 52);
 MTERP_OFFSET(offThread_cardTable,         Thread, cardTable, 56)
-MTERP_OFFSET(offThread_interpStackEnd,    Thread, interpStackEnd, 60)
+#ifdef WITH_CONDMARK
+MTERP_OFFSET(offThread_cardImmuneLimit,   Thread, cardImmuneLimit, 60)
+#endif
+MTERP_OFFSET(offThread_interpStackEnd,    Thread, interpStackEnd, 64)
 MTERP_OFFSET(offThread_exception,         Thread, exception, 68)
 MTERP_OFFSET(offThread_debugIsMethodEntry, Thread, debugIsMethodEntry, 72)
 MTERP_OFFSET(offThread_interpStackSize,   Thread, interpStackSize, 76)

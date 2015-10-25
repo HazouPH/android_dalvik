@@ -87,6 +87,26 @@ enum NativeInlineOps {
     INLINE_STRICT_MATH_MIN_INT = 26,
     INLINE_STRICT_MATH_MAX_INT = 27,
     INLINE_STRICT_MATH_SQRT = 28,
+    INLINE_MATH_ACOS = 29,
+    INLINE_MATH_ASIN = 30,
+    INLINE_MATH_ATAN = 31,
+    INLINE_MATH_ATAN2 = 32,
+    INLINE_MATH_CBRT = 33,
+    INLINE_MATH_CEIL = 34,
+    INLINE_MATH_COSH = 35,
+    INLINE_MATH_EXP = 36,
+    INLINE_MATH_EXPM1 = 37,
+    INLINE_MATH_FLOOR = 38,
+    INLINE_MATH_HYPOT = 39,
+    INLINE_MATH_LOG = 40,
+    INLINE_MATH_LOG10 = 41,
+    INLINE_MATH_LOG1P = 42,
+    INLINE_MATH_NEXTAFTER = 43,
+    INLINE_MATH_POW = 44,
+    INLINE_MATH_RINT = 45,
+    INLINE_MATH_SINH = 46,
+    INLINE_MATH_TAN = 47,
+    INLINE_MATH_TANH = 48,
 };
 
 /*
@@ -175,6 +195,66 @@ bool javaLangMath_cos(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
 
 bool javaLangMath_sin(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
                       JValue* pResult);
+
+bool javaLangMath_acos(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_asin(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_atan(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_atan2(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_cbrt(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_ceil(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_cosh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_exp(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                      JValue* pResult);
+
+bool javaLangMath_expm1(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_floor(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_hypot(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_log(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                      JValue* pResult);
+
+bool javaLangMath_log10(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_log1p(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                        JValue* pResult);
+
+bool javaLangMath_nextafter(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                            JValue* pResult);
+
+bool javaLangMath_pow(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                      JValue* pResult);
+
+bool javaLangMath_rint(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_sinh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
+
+bool javaLangMath_tan(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                      JValue* pResult);
+
+bool javaLangMath_tanh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+                       JValue* pResult);
 
 bool javaLangFloat_floatToIntBits(u4 arg0, u4 arg1, u4 arg2, u4 arg,
                                   JValue* pResult);

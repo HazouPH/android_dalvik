@@ -190,7 +190,7 @@ static bool createVtable(ClassObject* clazz);
 static bool createIftable(ClassObject* clazz);
 static bool insertMethodStubs(ClassObject* clazz);
 static bool computeFieldOffsets(ClassObject* clazz);
-static void throwEarlierClassFailure(ClassObject* clazz);
+static void throwEarlierClassFailure(ClassObject* clazz, const char* descriptor = 0);
 
 #if LOG_CLASS_LOADING
 /*
@@ -1693,8 +1693,12 @@ got_class:
             /*
              * Somebody else tried to load this and failed.  We need to raise
              * an exception and report failure.
+             * Handle the race condition: it is possible that when we were waiting for
+             * class loading by other thread, that loading ended up with an error.
+             * As a result descriptor field of the class is cleaned up.
+             * For this case we are providing descriptor explicitly.
              */
-            throwEarlierClassFailure(clazz);
+            throwEarlierClassFailure(clazz, descriptor);
             clazz = NULL;
             goto bail;
         }
@@ -1740,6 +1744,9 @@ static ClassObject* loadClassFromDex0(DvmDex* pDvmDex,
      * Make sure the aren't any "bonus" flags set, since we use them for
      * runtime state.
      */
+    /* bits we can reasonably expect to see set in a DEX access flags field */
+    const uint32_t EXPECTED_FILE_FLAGS = (ACC_CLASS_MASK | CLASS_ISPREVERIFIED |
+                                          CLASS_ISOPTIMIZED);
     if ((pClassDef->accessFlags & ~EXPECTED_FILE_FLAGS) != 0) {
         ALOGW("Invalid file flags in class %s: %04x",
             descriptor, pClassDef->accessFlags);
@@ -2123,6 +2130,16 @@ static void freeMethodInnards(Method* meth)
         DexCode* methodDexCode = (DexCode*) dvmGetMethodCode(meth);
         dvmLinearFree(meth->clazz->classLoader, methodDexCode);
     }
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+    /*
+     * Free the profileTable if have
+     */
+    if (IS_METHOD_FLAG_SET(meth, METHOD_PROFILE_MATCHED) == true) {
+        free(meth->profileTable), meth->profileTable = NULL;
+    }
+#endif
+
 }
 
 /*
@@ -2138,6 +2155,19 @@ static void cloneMethod(Method* dst, const Method* src)
     }
     memcpy(dst, src, sizeof(Method));
 }
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+/**
+ * @brief Check if the two method pointers point the same method.
+ * @param m1 the method pointer compared
+ * @param m2 the method pointer compared
+ * @return return zero if equal, else non-zero
+ */
+static int compareMethod(const Method* m1, const Method* m2)
+{
+    return (int) m1 - (int) m2;
+}
+#endif
 
 /*
  * Pull the interesting pieces out of a DexMethod.
@@ -2209,6 +2239,45 @@ static void loadMethodFromDex(ClassObject* clazz, const DexMethod* pDexMethod,
             meth->jniArgInfo = computeJniArgInfo(&meth->prototype);
         }
     }
+
+#if defined(WITH_JIT) && defined(WITH_JIT_TUNING)
+    /*
+     * In method profile mode, check if the method is the method we
+     * want to profile, if yes, set the METHOD_PROFILE_MATCHED flag
+     * and initialize the profileTable
+     */
+    if (gDvmJit.methodProfTable != NULL) {
+        // Firstly, we need check if the method's signature (class descriptor + method name) is in the method profile table.
+        int len = strlen(clazz->descriptor) +
+                  strlen(meth->name) + 1;
+        char fullSignature[len];
+        memset((void *)fullSignature, 0, len);
+        strncpy(fullSignature, clazz->descriptor, len);
+        strncat(fullSignature, meth->name, len - strlen(fullSignature));
+        int hashValue = dvmComputeUtf8Hash(fullSignature);
+        bool methodMatch =
+            dvmHashTableLookup(gDvmJit.methodTable, hashValue,
+                               fullSignature, (HashCompareFunc) strcmp,
+                               false) != NULL;
+
+        // If matched, we set the flag to the method
+        if (methodMatch == true) {
+            SET_METHOD_FLAG(meth, METHOD_PROFILE_MATCHED);
+            u4 insnsSize = dvmGetMethodInsnsSize(meth);
+            meth->profileTable = (int*) malloc(insnsSize*sizeof(int));
+            if (meth->profileTable == NULL) {
+                ALOGE("Heap alloc for method prof table failed");
+            } else {
+                memset(meth->profileTable, 0, insnsSize*sizeof(int));
+            }
+
+            dvmHashTableLock(gDvmJit.methodProfTable);
+            dvmHashTableLookup(gDvmJit.methodProfTable, hashValue, meth, (HashCompareFunc) compareMethod, true);
+            dvmHashTableUnlock(gDvmJit.methodProfTable);
+        }
+    }
+#endif
+
 }
 
 #if 0       /* replaced with private/read-write mapping */
@@ -3232,7 +3301,9 @@ static bool createIftable(ClassObject* clazz)
                     == 0)
                 {
                     LOGVV("INTF:   matched at %d", j);
-                    if (!dvmIsPublicMethod(clazz->vtable[j])) {
+                    if (!dvmIsAbstractMethod(clazz->vtable[j]) &&
+                        !dvmIsPublicMethod(clazz->vtable[j]))
+                    {
                         ALOGW("Implementation of %s.%s is not public",
                             clazz->descriptor, clazz->vtable[j]->name);
                         dvmThrowIllegalAccessError(
@@ -3745,7 +3816,7 @@ static bool computeFieldOffsets(ClassObject* clazz)
      * We map a C struct directly on top of java/lang/Class objects.  Make
      * sure we left enough room for the instance fields.
      */
-    assert(!dvmIsTheClassClass(clazz) || (size_t)fieldOffset <
+    assert(!dvmIsTheClassClass(clazz) || (size_t)fieldOffset <=
         OFFSETOF_MEMBER(ClassObject, instanceData) + sizeof(clazz->instanceData));
 
     clazz->objectSize = fieldOffset;
@@ -3760,16 +3831,17 @@ static bool computeFieldOffsets(ClassObject* clazz)
  * failed in verification, in which case v2 5.4.1 says we need to re-throw
  * the previous error.
  */
-static void throwEarlierClassFailure(ClassObject* clazz)
+static void throwEarlierClassFailure(ClassObject* clazz, const char* descriptor)
 {
+    const char* desc = clazz->descriptor == 0 ? descriptor : clazz->descriptor;
+
     ALOGI("Rejecting re-init on previously-failed class %s v=%p",
-        clazz->descriptor, clazz->verifyErrorClass);
+        desc, clazz->verifyErrorClass);
 
     if (clazz->verifyErrorClass == NULL) {
-        dvmThrowNoClassDefFoundError(clazz->descriptor);
+        dvmThrowNoClassDefFoundError(desc);
     } else {
-        dvmThrowExceptionWithClassMessage(clazz->verifyErrorClass,
-            clazz->descriptor);
+        dvmThrowExceptionWithClassMessage(clazz->verifyErrorClass, desc);
     }
 }
 
@@ -3938,9 +4010,13 @@ static bool compareDescriptorClasses(const char* descriptor,
      * will work.  (The bootstrap loader, by definition, never shows up
      * as the initiating loader of a class defined by some other loader.)
      */
-    dvmHashTableLock(gDvm.loadedClasses);
-    bool isInit = dvmLoaderInInitiatingList(result1, clazz2->classLoader);
-    dvmHashTableUnlock(gDvm.loadedClasses);
+    bool isInit = false;
+    if(result1 != NULL)
+    {
+        dvmHashTableLock(gDvm.loadedClasses);
+        isInit = dvmLoaderInInitiatingList(result1, clazz2->classLoader);
+        dvmHashTableUnlock(gDvm.loadedClasses);
+    }
 
     if (isInit) {
         //printf("%s(obj=%p) / %s(cl=%p): initiating\n",

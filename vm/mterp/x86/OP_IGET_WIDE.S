@@ -3,6 +3,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"volatile":"0"}
     /*
      * 64-bit instance field get.
      *
@@ -26,7 +27,7 @@
     movl    offThread_method(rIBASE),rIBASE     # rIBASE<- current method
     movl    offMethod_clazz(rIBASE),rIBASE      # rIBASE<- method->clazz
     SPILL_TMP1(%ecx)                            # save objpointer across call
-    movl    rPC,OUT_ARG0(%esp)                  # pass in method->clazz
+    movl    rIBASE,OUT_ARG0(%esp)                  # pass in method->clazz
     call    dvmResolveInstField                 #  ... to dvmResolveInstField
     UNSPILL_TMP1(%ecx)
     testl   %eax,%eax                           # returns InstrField ptr
@@ -44,8 +45,15 @@
     testl   %ecx,%ecx                           # object null?
     je      common_errNullObject                # object was null
     leal    (%ecx,%eax,1),%eax                  # eax<- address of field
+    .if $volatile
+    movl %eax, OUT_ARG0(%esp)
+    call dvmQuasiAtomicRead64
+    movl %eax, %ecx
+    movl %edx, %eax
+    .else
     movl    (%eax),%ecx                         # ecx<- lsw
     movl    4(%eax),%eax                        # eax<- msw
+    .endif
     SET_VREG_WORD %ecx rINST 0
     FETCH_INST_OPCODE 2 %ecx
     UNSPILL(rIBASE)                             # restore rIBASE

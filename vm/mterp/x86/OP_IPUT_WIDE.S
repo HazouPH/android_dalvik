@@ -3,6 +3,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"volatile":"0"}
     /*
      * 64-bit instance field put.
      *
@@ -47,8 +48,15 @@
     leal    (%ecx,%eax,1),%eax                  # eax<- address of field
     GET_VREG_WORD %ecx rINST 0                  # ecx<- lsw
     GET_VREG_WORD rINST rINST 1                 # rINST<- msw
+    .if $volatile
+    movl %eax, OUT_ARG2(%esp)
+    movl rINST, OUT_ARG1(%esp)
+    movl %ecx, OUT_ARG0(%esp)
+    call dvmQuasiAtomicSwap64Sync
+    .else
     movl    rINST,4(%eax)
     movl    %ecx,(%eax)
+    .endif
     FETCH_INST_OPCODE 2 %ecx
     UNSPILL(rIBASE)
     ADVANCE_PC 2

@@ -14,19 +14,108 @@
 
 LOCAL_PATH := $(call my-dir)
 
+WITH_JIT := $(strip $(WITH_JIT))
+ifeq ($(WITH_JIT),)
+  ifeq ($(TARGET_ARCH),x86)
+    WITH_JIT := true
+
+    # For all builds, except for the -user build we will enable support for
+    # VTune Amplifier by default. To collect any information about JIT look
+    # at -Xjitvtuneinfo:<info> option. By default, -Xjitvtuneinfo:none is
+    # used and it doesn't affect JIT compiler (one extra 'if' per compiled
+    # trace).
+    ifneq ($(TARGET_BUILD_VARIANT),user)
+      VTUNE_DALVIK := $(strip $(VTUNE_DALVIK))
+      ifeq ($(VTUNE_DALVIK),)
+        VTUNE_DALVIK := true
+      endif
+    endif
+
+  else
+    WITH_JIT := false
+    WITH_PCG := false
+  endif
+endif
+
+# Turning on WITH_PCG when WITH_JIT=true (either through command-line
+# or setting it to true above), and when WITH_PCG isn't already set
+ifeq ($(WITH_JIT),true)
+  ifeq ($(TARGET_ARCH),x86)
+    ifeq ($(WITH_PCG),)
+      ifneq ($(USE_INTEL_IPP),true)
+          # PCG depends on libsvml from vendor/intel/
+          WITH_PCG := false
+      else
+          WITH_PCG := true
+      endif
+    endif
+  endif
+endif
+
+# Region GC is an optimization in DalvikVM GC to reduce the GC pause time
+# and increase the application performance.
+WITH_REGION_GC := $(strip $(WITH_REGION_GC))
+ifeq ($(WITH_REGION_GC),)
+  ifeq ($(TARGET_ARCH),x86)
+    WITH_REGION_GC := true
+  else
+    WITH_REGION_GC := false
+  endif
+endif
+
+# Disable REGION_GC on small ram devices to prevent memory overhead
+ifeq ($(BOARD_HAVE_SMALL_RAM),true)
+    WITH_REGION_GC := false
+endif
+
+# TLA is an optimization in DalvikVM to provide thread local allocation for small objects.
+WITH_TLA := $(strip $(WITH_TLA))
+ifeq ($(WITH_TLA),)
+  ifeq ($(TARGET_ARCH),x86)
+    WITH_TLA := true
+  else
+    WITH_TLA := false
+  endif
+endif
+
+# Remove TLA on small ram devices to prevent memory overhead
+ifeq ($(BOARD_HAVE_SMALL_RAM),true)
+  WITH_TLA := false
+endif
+
+# Condional card marking is an optimization in DalvikVM to reduce
+# the card dirtying.cache pollution
+WITH_CONDMARK := $(strip $(WITH_CONDMARK))
+ifeq ($(WITH_CONDMARK),)
+  ifeq ($(TARGET_ARCH),x86)
+    WITH_CONDMARK := true
+  else
+    WITH_CONDMARK := false
+  endif
+endif
+
 subdirs := $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk, \
 		libdex \
 		vm \
-		dalvikvm \
 		dexgen \
 		dexlist \
 		dexopt \
 		dexdump \
-		dvz \
 		dx \
 		tools \
 		unit-tests \
 	))
+
+ifeq ($(TARGET_ARCH),x86)
+  subdirs += $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk, libcrash))
+  ifeq ($(WITH_JIT),true)
+    ifeq ($(WITH_PCG),true)
+      subdirs += $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk, \
+                 vm/compiler/codegen/x86/pcg \
+                 ))
+    endif
+  endif
+endif
 
 include $(subdirs)
 

@@ -1162,22 +1162,6 @@ GOTO_TARGET_DECL(exceptionThrown);
     }                                                                       \
     FINISH(2);
 
-/* File: c/OP_IGET_WIDE_VOLATILE.cpp */
-HANDLE_IGET_X(OP_IGET_WIDE_VOLATILE,    "-wide-volatile", LongVolatile, _WIDE)
-OP_END
-
-/* File: c/OP_IPUT_WIDE_VOLATILE.cpp */
-HANDLE_IPUT_X(OP_IPUT_WIDE_VOLATILE,    "-wide-volatile", LongVolatile, _WIDE)
-OP_END
-
-/* File: c/OP_SGET_WIDE_VOLATILE.cpp */
-HANDLE_SGET_X(OP_SGET_WIDE_VOLATILE,    "-wide-volatile", LongVolatile, _WIDE)
-OP_END
-
-/* File: c/OP_SPUT_WIDE_VOLATILE.cpp */
-HANDLE_SPUT_X(OP_SPUT_WIDE_VOLATILE,    "-wide-volatile", LongVolatile, _WIDE)
-OP_END
-
 /* File: c/OP_EXECUTE_INLINE_RANGE.cpp */
 HANDLE_OPCODE(OP_EXECUTE_INLINE_RANGE /*{vCCCC..v(CCCC+AA-1)}, inline@BBBB*/)
     {
@@ -1226,26 +1210,6 @@ OP_END
 /* File: c/OP_INVOKE_OBJECT_INIT_RANGE.cpp */
 HANDLE_OPCODE(OP_INVOKE_OBJECT_INIT_RANGE /*{vCCCC..v(CCCC+AA-1)}, meth@BBBB*/)
     {
-        Object* obj;
-
-        vsrc1 = FETCH(2);               /* reg number of "this" pointer */
-        obj = GET_REGISTER_AS_OBJECT(vsrc1);
-
-        if (!checkForNullExportPC(obj, fp, pc))
-            GOTO_exceptionThrown();
-
-        /*
-         * The object should be marked "finalizable" when Object.<init>
-         * completes normally.  We're going to assume it does complete
-         * (by virtue of being nothing but a return-void) and set it now.
-         */
-        if (IS_CLASS_FLAG_SET(obj->clazz, CLASS_ISFINALIZABLE)) {
-            EXPORT_PC();
-            dvmSetFinalizable(obj);
-            if (dvmGetException(self))
-                GOTO_exceptionThrown();
-        }
-
         if (self->interpBreak.ctl.subMode & kSubModeDebuggerActive) {
             /* behave like OP_INVOKE_DIRECT_RANGE */
             GOTO_invoke(invokeDirect, true);

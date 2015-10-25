@@ -24,19 +24,34 @@
 #
 # Compiler defines.
 #
-LOCAL_CFLAGS += -fstrict-aliasing -Wstrict-aliasing=2 -fno-align-jumps
+
+LOCAL_CFLAGS += -fstrict-aliasing -Wstrict-aliasing=2
 LOCAL_CFLAGS += -Wall -Wextra -Wno-unused-parameter
 LOCAL_CFLAGS += -DARCH_VARIANT=\"$(dvm_arch_variant)\"
+
+ifneq ($(strip $(LOCAL_CLANG)),true)
+LOCAL_CFLAGS += -fno-align-jumps
+endif
 
 #
 # Optional features.  These may impact the size or performance of the VM.
 #
+
+# Houdini support
+ifeq ($(INTEL_HOUDINI),true)
+LOCAL_CFLAGS += -DMTERP_NO_UNALIGN_64
+endif
 
 # Make a debugging version when building the simulator (if not told
 # otherwise) and when explicitly asked.
 dvm_make_debug_vm := false
 ifneq ($(strip $(DEBUG_DALVIK_VM)),)
   dvm_make_debug_vm := $(DEBUG_DALVIK_VM)
+endif
+
+# x86 uses only one variant at this moment
+ifeq ($(dvm_arch),x86)
+dvm_arch_variant := x86
 endif
 
 ifeq ($(dvm_make_debug_vm),true)
@@ -78,6 +93,25 @@ endif  # !dvm_make_debug_vm
 
 # bug hunting: checksum and verify interpreted stack when making JNI calls
 #LOCAL_CFLAGS += -DWITH_JNI_STACK_CHECK
+
+ifeq ($(PROFILE_OPCODE),true)
+        LOCAL_CFLAGS += -DPROFILE_OPCODE
+endif
+
+# Items that only apply if the JIT is being included
+ifeq ($(WITH_JIT),true)
+  # If WITH_JIT variable is false it is not possible to collect any info
+  # about JIT. Thus support for VTune Amplifier should not be enabled.
+  ifeq ($(VTUNE_DALVIK),true)
+    LOCAL_CFLAGS += -DVTUNE_DALVIK
+  endif
+
+  # Set default code generator to LCG if not otherwise specified.
+  DEFAULT_JIT_CODE_GENERATOR ?= LCG
+  # Set preprocessor symbol for selecting JIT code generator base on
+  # makefile variable.
+  LOCAL_CFLAGS += -DDEFAULT_JIT_CODE_GENERATOR=$(DEFAULT_JIT_CODE_GENERATOR)
+endif
 
 LOCAL_SRC_FILES := \
 	AllocTracker.cpp \
@@ -184,11 +218,29 @@ LOCAL_SRC_FILES := \
 	test/TestHash.cpp \
 	test/TestIndirectRefTable.cpp
 
+#Add TLA support if needed
+ifeq ($(WITH_TLA), true)
+  LOCAL_CFLAGS += -DWITH_TLA
+  LOCAL_SRC_FILES += alloc/ThreadLocalHeap.cpp
+endif
+
+ifeq ($(WITH_REGION_GC), true)
+  LOCAL_CFLAGS += -DWITH_REGION_GC
+endif
+
+ifeq ($(WITH_CONDMARK), true)
+  LOCAL_CFLAGS += -DWITH_CONDMARK
+endif
+
 # TODO: this is the wrong test, but what's the right one?
 ifneq ($(filter arm mips,$(dvm_arch)),)
   LOCAL_SRC_FILES += os/android.cpp
 else
-  LOCAL_SRC_FILES += os/linux.cpp
+   ifeq ($(dvm_arch_variant),x86)
+   LOCAL_SRC_FILES += os/android.cpp
+   else
+   LOCAL_SRC_FILES += os/linux.cpp
+   endif
 endif
 
 WITH_COPYING_GC := $(strip $(WITH_COPYING_GC))
@@ -198,6 +250,11 @@ ifeq ($(WITH_COPYING_GC),true)
   LOCAL_SRC_FILES += \
 	alloc/Copying.cpp.arm
 else
+# To customize dlmalloc's alignment, set BOARD_MALLOC_ALIGNMENT in
+# the appropriate BoardConfig.mk file.
+  ifneq ($(BOARD_MALLOC_ALIGNMENT),)
+     LOCAL_CFLAGS += -DMALLOC_ALIGNMENT=$(BOARD_MALLOC_ALIGNMENT)
+  endif
   LOCAL_SRC_FILES += \
 	alloc/DlMalloc.cpp \
 	alloc/HeapSource.cpp \
@@ -210,23 +267,25 @@ ifeq ($(WITH_JIT),true)
   LOCAL_CFLAGS += -DWITH_JIT
   LOCAL_SRC_FILES += \
 	compiler/Compiler.cpp \
+	compiler/vtune/JitProfiling.cpp \
+	compiler/VTuneSupport.cpp \
 	compiler/Frontend.cpp \
 	compiler/Utility.cpp \
 	compiler/InlineTransformation.cpp \
 	compiler/IntermediateRep.cpp \
 	compiler/Dataflow.cpp \
 	compiler/SSATransformation.cpp \
+	compiler/SSAWalkData.cpp \
 	compiler/Loop.cpp \
 	compiler/Ralloc.cpp \
 	interp/Jit.cpp
 endif
 
 LOCAL_C_INCLUDES += \
-	$(JNI_H_INCLUDE) \
 	dalvik \
 	dalvik/vm \
 	external/zlib \
-	libcore/include \
+	libcore/include
 
 MTERP_ARCH_KNOWN := false
 
@@ -286,7 +345,8 @@ ifeq ($(dvm_arch),x86)
   ifeq ($(dvm_os),linux)
     MTERP_ARCH_KNOWN := true
     LOCAL_CFLAGS += -DDVM_JMP_TABLE_MTERP=1 \
-                    -DMTERP_STUB
+                    -DMTERP_STUB \
+                    -DEXTRA_SCRATCH_VR
     LOCAL_SRC_FILES += \
 		arch/$(dvm_arch_variant)/Call386ABI.S \
 		arch/$(dvm_arch_variant)/Hints386ABI.cpp \
@@ -295,31 +355,64 @@ ifeq ($(dvm_arch),x86)
     ifeq ($(WITH_JIT),true)
       LOCAL_CFLAGS += -DARCH_IA32
       LOCAL_SRC_FILES += \
-                compiler/codegen/x86/LowerAlu.cpp \
-                compiler/codegen/x86/LowerConst.cpp \
-                compiler/codegen/x86/LowerMove.cpp \
-                compiler/codegen/x86/Lower.cpp \
-                compiler/codegen/x86/LowerHelper.cpp \
-                compiler/codegen/x86/LowerJump.cpp \
-                compiler/codegen/x86/LowerObject.cpp \
-                compiler/codegen/x86/AnalysisO1.cpp \
-                compiler/codegen/x86/BytecodeVisitor.cpp \
-                compiler/codegen/x86/NcgAot.cpp \
-                compiler/codegen/x86/CodegenInterface.cpp \
-                compiler/codegen/x86/LowerInvoke.cpp \
-                compiler/codegen/x86/LowerReturn.cpp \
-                compiler/codegen/x86/NcgHelper.cpp \
-                compiler/codegen/x86/LowerGetPut.cpp
+	      compiler/codegen/$(dvm_arch_variant)/lightcg/LowerAlu.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerConst.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerMove.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/Lower.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerHelper.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerJump.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerObject.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/AnalysisO1.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/CompilationUnit.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/BytecodeVisitor.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/NcgAot.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/CodegenInterface.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerInvoke.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerReturn.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/NcgHelper.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/LowerGetPut.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/Scheduler.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/InstructionGeneration.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/ExceptionHandling.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/RegisterizationBE.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/CompileTable.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/CompilationErrorLCG.cpp \
+              compiler/codegen/$(dvm_arch_variant)/lightcg/Profile.cpp \
+              compiler/codegen/$(dvm_arch_variant)/CompilationErrorX86.cpp \
+              compiler/codegen/$(dvm_arch_variant)/X86Common.cpp \
+              compiler/codegen/$(dvm_arch_variant)/VTuneSupportX86.cpp \
+              compiler/codegen/$(dvm_arch_variant)/BackEndEntry.cpp \
+              compiler/codegen/$(dvm_arch_variant)/StackExtensionX86.cpp \
+              compiler/PassDriver.cpp \
+              compiler/CompilationError.cpp \
+              compiler/Checks.cpp \
+              compiler/LoopRegisterUsage.cpp \
+              compiler/InvariantRemoval.cpp \
+              compiler/Pass.cpp \
+              compiler/BBOptimization.cpp \
+              compiler/LoopInformation.cpp \
+              compiler/RegisterizationME.cpp \
+              compiler/Expression.cpp \
+              compiler/AccumulationSinking.cpp \
+              compiler/SinkCastOpt.cpp \
+              compiler/Vectorization.cpp \
+              compiler/JitVerbose.cpp \
+              compiler/MethodContext.cpp \
+              compiler/MethodContextHandler.cpp
 
-      # need apache harmony x86 encoder/decoder
-      LOCAL_C_INCLUDES += \
-                dalvik/vm/compiler/codegen/x86/libenc
-      LOCAL_SRC_FILES += \
-                compiler/codegen/x86/libenc/enc_base.cpp \
-                compiler/codegen/x86/libenc/dec_base.cpp \
-                compiler/codegen/x86/libenc/enc_wrapper.cpp \
-                compiler/codegen/x86/libenc/enc_tabl.cpp
+       LOCAL_C_INCLUDES += \
+              dalvik/vm/compiler \
+              dalvik/vm/compiler/codegen \
+              dalvik/vm/compiler/codegen/x86 \
+              dalvik/vm/compiler/codegen/x86/lightcg \
+              dalvik/vm/compiler/codegen/x86/lightcg/libenc \
 
+       # need apache harmony x86 encoder/decoder
+       LOCAL_SRC_FILES += \
+              compiler/codegen/x86/lightcg/libenc/enc_base.cpp \
+              compiler/codegen/x86/lightcg/libenc/dec_base.cpp \
+              compiler/codegen/x86/lightcg/libenc/enc_wrapper.cpp \
+              compiler/codegen/x86/lightcg/libenc/enc_tabl.cpp
     endif
   endif
 endif

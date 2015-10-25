@@ -1,2 +1,2 @@
 %verify "executed"
-%include "x86/OP_IPUT.S"
+%include "x86/OP_IPUT.S" {"store":"xchg"}

@@ -266,3 +266,86 @@ static void storeValueWide(CompilationUnit *cUnit, RegLocation rlDest,
         }
     }
 }
+
+#ifndef ARCH_IA32
+//For non x86, to let it compile
+bool dvmCompilerFindRegClass (MIR *mir, int vR, RegisterClass &regClass, bool onlyUse)
+{
+    (void) mir;
+    (void) vR;
+    (void) regClass;
+    (void) onlyUse;
+    return false;
+}
+
+/**
+ * @brief Architecture specific BasicBlock printing
+ * @param cUnit the CompilationUnit
+ * @param bb the BasicBlock
+ * @param file the File in which to dump the BasicBlock
+ */
+void dvmCompilerDumpArchSpecificBB(CompilationUnit *cUnit, BasicBlock *bb, FILE *file, bool beforeMIRs) {
+    // Empty stub for non x86
+    (void) cUnit;
+    (void) bb;
+    (void) file;
+    (void) beforeMIRs;
+}
+
+/**
+ * @brief Architecture specific BasicBlock creator
+ * @details Initializes x86 specific BasicBlock fields
+ * @return newly created BasicBlock
+ */
+BasicBlock * dvmCompilerArchSpecificNewBB(void) {
+    // Empty stub since non x86 do not use a specialized BasicBlock
+    return NULL;
+}
+
+/**
+ * @brief Architecture specific checker for possible bail out to VM
+ * @details Returns true for x86 if bail out from JIT code is possible
+ * @param cUnit the CompilationUnit
+ * @param mir the MIR to check
+ * @return true if bail out possible
+ */
+bool backendCanBailOut(CompilationUnit *cUnit, MIR *mir) {
+    // non x86 do not use a fake uses
+    return false;
+}
+
+/**
+ * @brief Check whether architecture supports vectorized packed size in bytes
+ * @param size The vectorized packed size, ie the size of the operands lying in a vectorized instruction
+ * @return Returns whether the architecture supports it
+ */
+bool dvmCompilerArchSupportsVectorizedPackedSize (unsigned int size)
+{
+    //No vectorization support for other architectures unless encoder implements it
+    return false;
+}
+
+/**
+ * @brief Used to check whether the architecture specific portion supports extended opcode
+ * @param extendedOpcode The opcode to check
+ * @return Returns whether the extended opcode is supported
+ */
+bool dvmCompilerArchSupportsExtendedOp (int extendedOpcode)
+{
+    switch (extendedOpcode)
+    {
+        case kMirOpPhi:
+        case kMirOpNullNRangeUpCheck:
+        case kMirOpNullNRangeDownCheck:
+        case kMirOpLowerBound:
+        case kMirOpPunt:
+        case kMirOpCheckInlinePrediction:
+            return true;
+        default:
+            break;
+    }
+
+    //If we get here it is not supported
+    return false;
+}
+#endif

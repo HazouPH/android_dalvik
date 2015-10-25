@@ -1,2 +1,2 @@
 %verify "executed"
-%include "x86/binflop.S" {"instr":"fmuls","load":"flds","store":"fstps"}
+%include "x86/sseBinop.S" {"instr":"muls","suff":"s"}

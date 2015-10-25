@@ -2,6 +2,7 @@
 %verify "field already resolved"
 %verify "field not yet resolved"
 %verify "field cannot be resolved"
+%default {"store":"movl"}
     /*
      * SPUT object handler.
      */
@@ -22,12 +23,16 @@
 .L${opcode}_finish:                              # field ptr in eax
     movzbl    rINSTbl,%ecx                       # ecx<- AA
     GET_VREG_R  %ecx %ecx
-    movl      %ecx,offStaticField_value(%eax)    # do the store
     testl     %ecx,%ecx                          # stored null object ptr?
+    $store      %ecx,offStaticField_value(%eax)    # do the store
     je        1f                                 # skip card mark if null
     movl      rSELF,%ecx
     movl      offField_clazz(%eax),%eax          # eax<- method->clazz
-    movl      offThread_cardTable(%ecx),%ecx       # get card table base
+#if defined(WITH_CONDMARK)
+    cmpl      %eax,offThread_cardImmuneLimit(%ecx)
+    jbe       1f
+#endif
+    movl      offThread_cardTable(%ecx),%ecx     # get card table base
     shrl      $$GC_CARD_SHIFT,%eax               # head to card number
     movb      %cl,(%ecx,%eax)                    # mark card
 1:

@@ -1,2 +1,2 @@
 %verify "executed"
-%include "x86/OP_SPUT.S"
+%include "x86/OP_SPUT.S" {"store":"xchg"}

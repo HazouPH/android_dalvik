@@ -713,7 +713,7 @@ static int findCatchInMethod(Thread* self, const Method* method, int relPc,
  * If "scanOnly" is false, self->interpSave.curFrame is also set to this value.
  */
 int dvmFindCatchBlock(Thread* self, int relPc, Object* exception,
-    bool scanOnly, void** newFrame)
+    int scanOnly, void** newFrame)
 {
     u4* fp = self->interpSave.curFrame;
     int catchAddr = -1;
@@ -832,8 +832,6 @@ void* dvmFillInStackTraceInternal(Thread* thread, bool wantObject, size_t* pCoun
     if (pCount != NULL)
         *pCount = 0;
     fp = thread->interpSave.curFrame;
-
-    assert(thread == dvmThreadSelf() || dvmIsSuspended(thread));
 
     /*
      * We're looking at a stack frame for code running below a Throwable

@@ -50,12 +50,17 @@
     jmp       common_exceptionThrown
 
 .L${opcode}_types_okay:
-    movl      offThread_cardTable(%eax),%eax   # get card table base
     movl      rINST,(%ecx)                   # store into array
     UNSPILL_TMP2(rINST)                      # recover object head
-    FETCH_INST_OPCODE 2 %ecx
+#if defined(WITH_CONDMARK)
+    cmpl      rINST,offThread_cardImmuneLimit(%eax)
+    jbe       .L${opcode}_skip_mark
+#endif
+    movl      offThread_cardTable(%eax),%eax # get card table base
     shrl      $$GC_CARD_SHIFT,rINST          # object head to card number
     movb      %al,(%eax,rINST)               # mark card using object head
+.L${opcode}_skip_mark:
+    FETCH_INST_OPCODE 2 %ecx
     ADVANCE_PC 2
     GOTO_NEXT_R %ecx
 

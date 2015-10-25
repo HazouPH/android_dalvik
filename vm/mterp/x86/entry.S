@@ -55,16 +55,25 @@ dvmMterpStdRun:
     GET_JIT_PROF_TABLE %ecx %eax
     movl        $$0, offThread_inJitCodeCache(%ecx)
     cmpl        $$0, %eax
+
+#if !defined(WITH_SELF_VERIFICATION)
+                                     # profiling is enabled
     jne         common_updateProfile # set up %ebx & %edx & rPC
+#else
+    je          1f                   # profiling is disabled
+    jmp         common_updateProfile # collect profiles
 #endif
 
+#endif
+
+1:
    /* Normal case: start executing the instruction at rPC */
     GOTO_NEXT
 
     .global dvmMterpStdBail
     .type   dvmMterpStdBail, %function
 /*
- * void dvmMterpStdBail(Thread* self, bool changeInterp)
+ * void dvmMterpStdBail(Thread* self, int changeInterp)
  *
  * Restore the stack pointer and PC from the save point established on entry.
  * This is essentially the same as a longjmp, but should be cheaper.  The
@@ -75,7 +84,7 @@ dvmMterpStdRun:
  *
  * On entry:
  *  esp+4 (arg0)  Thread* self
- *  esp+8 (arg1)  bool changeInterp
+ *  esp+8 (arg1)  int changeInterp
  */
 dvmMterpStdBail:
     movl    4(%esp),%ecx                 # grab self

@@ -20,18 +20,11 @@
 #include "Dalvik.h"
 #include "native/InternalNativePriv.h"
 
-#ifdef HAVE_SELINUX
 #include <selinux/android.h>
-#endif
 
 #include <signal.h>
-#if (__GNUC__ == 4 && __GNUC_MINOR__ == 7)
-#include <sys/resource.h>
-#endif
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/mman.h>
-#include <stdio.h>
 #include <grp.h>
 #include <errno.h>
 #include <paths.h>
@@ -43,12 +36,20 @@
 #include <cutils/sched_policy.h>
 #include <cutils/multiuser.h>
 #include <sched.h>
+#include <sys/utsname.h>
+#include <sys/capability.h>
 
 #if defined(HAVE_PRCTL)
 # include <sys/prctl.h>
 #endif
 
+#ifdef HAVE_ANDROID_OS
+#include <cutils/properties.h>
+#endif
+
 #define ZYGOTE_LOG_TAG "Zygote"
+
+#define MASK_32BIT 0xFFFFFFFF
 
 /* must match values in dalvik.system.Zygote */
 enum {
@@ -276,42 +277,16 @@ static int mountEmulatedStorage(uid_t uid, u4 mountMode) {
 
         // Prepare source paths
         char source_user[PATH_MAX];
-        char source_obb[PATH_MAX];
         char target_user[PATH_MAX];
 
         // /mnt/shell/emulated/0
         snprintf(source_user, PATH_MAX, "%s/%d", source, userid);
-        // /mnt/shell/emulated/obb
-        snprintf(source_obb, PATH_MAX, "%s/obb", source);
         // /storage/emulated/0
         snprintf(target_user, PATH_MAX, "%s/%d", target, userid);
 
         if (fs_prepare_dir(source_user, 0000, 0, 0) == -1
-                || fs_prepare_dir(source_obb, 0000, 0, 0) == -1
                 || fs_prepare_dir(target_user, 0000, 0, 0) == -1) {
             return -1;
-        }
-
-        // Unfortunately bind mounts from outside ANDROID_STORAGE retain the
-        // recursive-shared property (kernel bug?).  This means any additional bind
-        // mounts (e.g., /storage/emulated/0/Android/obb) will also appear, shared
-        // in all namespaces, at their respective source paths (e.g.,
-        // /mnt/shell/emulated/0/Android/obb), leading to hundreds of
-        // /proc/mounts-visible bind mounts.  As a workaround, mark
-        // EMULATED_STORAGE_SOURCE (e.g., /mnt/shell/emulated) also a slave so that
-        // subsequent bind mounts are confined to this namespace.  Note,
-        // EMULATED_STORAGE_SOURCE must already serve as a mountpoint, which it
-        // should for the "sdcard" fuse volume.
-        if (mount(NULL, source, NULL, (MS_SLAVE | MS_REC), NULL) == -1) {
-            SLOGW("Failed to mount %s as MS_SLAVE: %s", source, strerror(errno));
-
-            // Fallback: Mark rootfs as slave.  All mounts under "/" will be hidden
-            // from other apps and users.  This shouldn't happen unless the sdcard
-            // service is broken.
-            if (mount("rootfs", "/", NULL, (MS_SLAVE | MS_REC), NULL) == -1) {
-                SLOGE("Failed to mount rootfs as MS_SLAVE: %s", strerror(errno));
-                return -1;
-            }
         }
 
         if (mountMode == MOUNT_EXTERNAL_MULTIUSER_ALL) {
@@ -328,23 +303,7 @@ static int mountEmulatedStorage(uid_t uid, u4 mountMode) {
             }
         }
 
-        // Now that user is mounted, prepare and mount OBB storage
-        // into place for current user
-        char target_android[PATH_MAX];
-        char target_obb[PATH_MAX];
-
-        // /storage/emulated/0/Android
-        snprintf(target_android, PATH_MAX, "%s/%d/Android", target, userid);
-        // /storage/emulated/0/Android/obb
-        snprintf(target_obb, PATH_MAX, "%s/%d/Android/obb", target, userid);
-
-        if (fs_prepare_dir(target_android, 0000, 0, 0) == -1
-                || fs_prepare_dir(target_obb, 0000, 0, 0) == -1
-                || fs_prepare_dir(legacy, 0000, 0, 0) == -1) {
-            return -1;
-        }
-        if (mount(source_obb, target_obb, NULL, MS_BIND, NULL) == -1) {
-            ALOGE("Failed to mount %s to %s: %s", source_obb, target_obb, strerror(errno));
+        if (fs_prepare_dir(legacy, 0000, 0, 0) == -1) {
             return -1;
         }
 
@@ -416,6 +375,9 @@ static void Dalvik_dalvik_system_Zygote_fork(const u4* args, JValue* pResult)
  */
 static void enableDebugFeatures(u4 debugFlags)
 {
+#ifdef HAVE_ANDROID_OS
+    char value[PROPERTY_VALUE_MAX];
+#endif
     ALOGV("debugFlags is 0x%02x", debugFlags);
 
     gDvm.jdwpAllowed = ((debugFlags & DEBUG_ENABLE_DEBUGGER) != 0);
@@ -455,12 +417,19 @@ static void enableDebugFeatures(u4 debugFlags)
                  getpid(), strerror(errno));
         } else {
             struct rlimit rl;
-            rl.rlim_cur = 0;
-            rl.rlim_max = RLIM_INFINITY;
-            if (setrlimit(RLIMIT_CORE, &rl) < 0) {
-                ALOGE("could not disable core file generation for pid %d: %s",
-                    getpid(), strerror(errno));
+            property_get("persist.core.enabled", value, "");
+            if (strcmp(value, "1") != 0) {
+                ALOGD("Try to disable coredump for pid %d",
+                     getpid());
+
+               rl.rlim_cur = 0;
+               rl.rlim_max = RLIM_INFINITY;
+               if (setrlimit(RLIMIT_CORE, &rl) < 0) {
+                   ALOGE("could not disable core file generation for pid %d: %s",
+                        getpid(), strerror(errno));
+               }
             }
+
         }
     }
 #endif
@@ -475,26 +444,27 @@ static int setCapabilities(int64_t permitted, int64_t effective)
 {
 #ifdef HAVE_ANDROID_OS
     struct __user_cap_header_struct capheader;
-    struct __user_cap_data_struct capdata;
+    struct __user_cap_data_struct capdata[2];
 
     memset(&capheader, 0, sizeof(capheader));
     memset(&capdata, 0, sizeof(capdata));
 
-    capheader.version = _LINUX_CAPABILITY_VERSION;
+    capheader.version = _LINUX_CAPABILITY_VERSION_3;
     capheader.pid = 0;
 
-    capdata.effective = effective;
-    capdata.permitted = permitted;
+    capdata[0].effective = effective & MASK_32BIT;
+    capdata[1].effective = (effective >> 32) & MASK_32BIT;
+    capdata[0].permitted = permitted & MASK_32BIT;
+    capdata[1].permitted = (permitted >> 32) & MASK_32BIT;
 
     ALOGV("CAPSET perm=%llx eff=%llx", permitted, effective);
-    if (capset(&capheader, &capdata) != 0)
+    if (capset(&capheader, capdata) != 0)
         return errno;
 #endif /*HAVE_ANDROID_OS*/
 
     return 0;
 }
 
-#ifdef HAVE_SELINUX
 /*
  * Set SELinux security context.
  *
@@ -509,65 +479,27 @@ static int setSELinuxContext(uid_t uid, bool isSystemServer,
     return 0;
 #endif
 }
-#endif
 
-/*
- * Basic KSM Support
- */
-#ifndef MADV_MERGEABLE
-#define MADV_MERGEABLE 12
-#endif
-
-static inline void pushAnonymousPagesToKSM(void)
-{
-    FILE *fp;
-    char section[100];
-    char perms[5];
-    unsigned long start, end, misc;
-    int ch, offset;
-
-    fp = fopen("/proc/self/maps","r");
-
-    if (fp != NULL) {
-        while (fscanf(fp, "%lx-%lx %4s %lx %lx:%lx %ld",
-                 &start, &end, perms, &misc, &misc, &misc, &misc) == 7)
-        {
-            /* Read the sections name striping any preceeding spaces
-               and truncating to 100char (99 + \0)*/
-            section[0] = 0;
-            offset = 0;
-            while(1)
-            {
-                ch = fgetc(fp);
-                if (ch == '\n' || ch == EOF) {
-                    break;
-                }
-                if ((offset == 0) && (ch == ' ')) {
-                    continue;
-                }
-                if ((offset + 1) < 100) {
-                    section[offset]=ch;
-                    section[offset+1]=0;
-                    offset++;
-                }
-            }
-            /* now decide if we want to scan the section or not:
-               for now we scan Anonymous (sections with no file name) stack and
-               heap sections*/
-            if (( section[0] == 0) ||
-               (strcmp(section,"[stack]") == 0) ||
-               (strcmp(section,"[heap]") == 0))
-            {
-                /* The section matches pass it into madvise */
-                madvise((void*) start, (size_t) end-start, MADV_MERGEABLE);
-            }
-            if (ch == EOF) {
-                break;
-            }
-        }
-        fclose(fp);
+static bool needsNoRandomizeWorkaround() {
+#if !defined(__arm__)
+    return false;
+#else
+    int major;
+    int minor;
+    struct utsname uts;
+    if (uname(&uts) == -1) {
+        return false;
     }
+
+    if (sscanf(uts.release, "%d.%d", &major, &minor) != 2) {
+        return false;
+    }
+
+    // Kernels before 3.4.* need the workaround.
+    return (major < 3) || ((major == 3) && (minor < 4));
+#endif
 }
+
 /*
  * Utility routine to fork zygote and specialize the child process.
  */
@@ -582,10 +514,8 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
     ArrayObject *rlimits = (ArrayObject *)args[4];
     u4 mountMode = MOUNT_EXTERNAL_NONE;
     int64_t permittedCapabilities, effectiveCapabilities;
-#ifdef HAVE_SELINUX
     char *seInfo = NULL;
     char *niceName = NULL;
-#endif
 
     if (isSystemServer) {
         /*
@@ -600,7 +530,6 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
     } else {
         mountMode = args[5];
         permittedCapabilities = effectiveCapabilities = 0;
-#ifdef HAVE_SELINUX
         StringObject* seInfoObj = (StringObject*)args[6];
         if (seInfoObj) {
             seInfo = dvmCreateCstrFromString(seInfoObj);
@@ -615,9 +544,10 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
             if (!niceName) {
                 ALOGE("niceName dvmCreateCstrFromString failed");
                 dvmAbort();
+            } else {
+                gDvm.niceName = strdup(niceName);
             }
         }
-#endif
     }
 
     if (!gDvm.zygote) {
@@ -655,6 +585,21 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
             }
         }
 
+        for (int i = 0; prctl(PR_CAPBSET_READ, i, 0, 0, 0) >= 0; i++) {
+            err = prctl(PR_CAPBSET_DROP, i, 0, 0, 0);
+            if (err < 0) {
+                if (errno == EINVAL) {
+                    ALOGW("PR_CAPBSET_DROP %d failed: %s. "
+                          "Please make sure your kernel is compiled with "
+                          "file capabilities support enabled.",
+                          i, strerror(errno));
+                } else {
+                    ALOGE("PR_CAPBSET_DROP %d failed: %s.", i, strerror(errno));
+                    dvmAbort();
+                }
+            }
+        }
+
 #endif /* HAVE_ANDROID_OS */
 
         if (mountMode != MOUNT_EXTERNAL_NONE) {
@@ -686,22 +631,24 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
             dvmAbort();
         }
 
-        err = setgid(gid);
+        err = setresgid(gid, gid, gid);
         if (err < 0) {
-            ALOGE("cannot setgid(%d): %s", gid, strerror(errno));
+            ALOGE("cannot setresgid(%d): %s", gid, strerror(errno));
             dvmAbort();
         }
 
-        err = setuid(uid);
+        err = setresuid(uid, uid, uid);
         if (err < 0) {
-            ALOGE("cannot setuid(%d): %s", uid, strerror(errno));
+            ALOGE("cannot setresuid(%d): %s", uid, strerror(errno));
             dvmAbort();
         }
 
-        int current = personality(0xffffFFFF);
-        int success = personality((ADDR_NO_RANDOMIZE | current));
-        if (success == -1) {
-          ALOGW("Personality switch failed. current=%d error=%d\n", current, errno);
+        if (needsNoRandomizeWorkaround()) {
+            int current = personality(0xffffFFFF);
+            int success = personality((ADDR_NO_RANDOMIZE | current));
+            if (success == -1) {
+                ALOGW("Personality switch failed. current=%d error=%d\n", current, errno);
+            }
         }
 
         err = setCapabilities(permittedCapabilities, effectiveCapabilities);
@@ -717,7 +664,6 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
             dvmAbort();
         }
 
-#ifdef HAVE_SELINUX
         err = setSELinuxContext(uid, isSystemServer, seInfo, niceName);
         if (err < 0) {
             ALOGE("cannot set SELinux context: %s\n", strerror(errno));
@@ -728,7 +674,6 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
         // lock when we forked.
         free(seInfo);
         free(niceName);
-#endif
 
         /*
          * Our system thread ID has changed.  Get the new one.
@@ -741,17 +686,15 @@ static pid_t forkAndSpecializeCommon(const u4* args, bool isSystemServer)
 
         unsetSignalHandler();
         gDvm.zygote = false;
+        ALOGD("Process %d nice name: %s", getpid(), gDvm.niceName);
         if (!dvmInitAfterZygote()) {
             ALOGE("error in post-zygote initialization");
             dvmAbort();
         }
-        pushAnonymousPagesToKSM();
     } else if (pid > 0) {
         /* the parent process */
-#ifdef HAVE_SELINUX
         free(seInfo);
         free(niceName);
-#endif
     }
 
     return pid;
@@ -801,22 +744,6 @@ static void Dalvik_dalvik_system_Zygote_forkSystemServer(
     RETURN_INT(pid);
 }
 
-/* native private static void nativeExecShell(String command);
- */
-static void Dalvik_dalvik_system_Zygote_execShell(
-        const u4* args, JValue* pResult)
-{
-    StringObject* command = (StringObject*)args[0];
-
-    const char *argp[] = {_PATH_BSHELL, "-c", NULL, NULL};
-    argp[2] = dvmCreateCstrFromString(command);
-
-    ALOGI("Exec: %s %s %s", argp[0], argp[1], argp[2]);
-
-    execv(_PATH_BSHELL, (char**)argp);
-    exit(127);
-}
-
 const DalvikNativeMethod dvm_dalvik_system_Zygote[] = {
     { "nativeFork", "()I",
       Dalvik_dalvik_system_Zygote_fork },
@@ -824,7 +751,5 @@ const DalvikNativeMethod dvm_dalvik_system_Zygote[] = {
       Dalvik_dalvik_system_Zygote_forkAndSpecialize },
     { "nativeForkSystemServer", "(II[II[[IJJ)I",
       Dalvik_dalvik_system_Zygote_forkSystemServer },
-    { "nativeExecShell", "(Ljava/lang/String;)V",
-      Dalvik_dalvik_system_Zygote_execShell },
     { NULL, NULL, NULL },
 };

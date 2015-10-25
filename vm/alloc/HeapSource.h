@@ -105,15 +105,29 @@ size_t dvmHeapSourceGetValue(HeapSourceValueSpec spec,
                              size_t perHeapStats[], size_t arrayLen);
 
 /*
- * Allocates <n> bytes of zeroed data.
+ * Returns active number of available bytes
  */
-void *dvmHeapSourceAlloc(size_t n);
+size_t dvmHeapSourceGetAvailableFree(void);
+
+
+/*
+ * Allocates <n> bytes.
+ *
+ * clear, object is zeroed if set to true
+ *
+ */
+void *dvmHeapSourceAlloc(size_t n, bool clear = true);
 
 /*
  * Allocates <n> bytes of zeroed data, growing up to absoluteMaxSize
  * if necessary.
  */
-void *dvmHeapSourceAllocAndGrow(size_t n);
+void *dvmHeapSourceAllocAndGrow(size_t n, bool clear  = true);
+
+/*
+ * Free one chunk of memory
+ */
+void dvmHeapSourceFree(void *ptr);
 
 /*
  * Frees the first numPtrs objects in the ptrs list and returns the
@@ -122,6 +136,22 @@ void *dvmHeapSourceAllocAndGrow(size_t n);
  * that there are no duplicates, and no entries are NULL.
  */
 size_t dvmHeapSourceFreeList(size_t numPtrs, void **ptrs);
+
+/*
+ * Refresh GC bit table for a newly allocated object
+ */
+void dvmHeapSourceSetObjectBit(void* ptr);
+
+/*
+ * Refresh GC bit table for a the list of sweeped objects
+ */
+size_t dvmHeapSourceClearObjectBits(size_t numPtrs, void **ptrs);
+
+
+/*
+ * refresh number of objects allocated upon sweep
+ */
+void dvmHeapSourceCountFree(size_t numObjs,void **ptrs);
 
 /*
  * Returns true iff <ptr> was allocated from the heap source.
@@ -200,4 +230,41 @@ void *dvmHeapSourceGetImmuneLimit(bool isPartial);
  */
 size_t dvmHeapSourceGetMaximumSize(void);
 
+/*
+ * Called from VMRuntime.registerNativeAllocation.
+ */
+void dvmHeapSourceRegisterNativeAllocation(int bytes);
+
+/*
+ * Called from VMRuntime.registerNativeFree.
+ */
+void dvmHeapSourceRegisterNativeFree(int bytes);
+
+#ifdef WITH_REGION_GC
+/*
+ * Set true when GC has more than one heap.
+ */
+void setMultiHeapsEnabled(bool status);
+bool isMultiHeapsEnabled();
+
+/* Get active heap size. */
+size_t dvmGetActiveHeapSize();
+
+/* Get active heap base. */
+char* dvmGetActiveHeapBase();
+
+/* Get zygote heap size.  */
+size_t dvmGetZygoteHeapSize();
+
+/* Get zygote heap base.  */
+char* dvmGetZygoteHeapBase();
+
+/*
+ * Check cross heap pointer. If pointer is from zygote heap to
+ * active heap, it records the pointer by marking the dirty cards
+ * for the object contains this pointer.
+ * It's used in Region GC major collection currently.
+ */
+void hsCheckPointer2AppHeap(Object *from, Object *to);
+#endif //WITH_REGION_GC
 #endif  // DALVIK_HEAP_SOURCE_H_

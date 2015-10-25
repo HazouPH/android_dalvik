@@ -474,13 +474,41 @@ static inline int indexOfCommon(Object* strObj, int ch, int start)
         start++;
     }
 #else
-    /* 16-bit loop, slightly better on ARM */
     const u2* ptr = chars + start;
     const u2* endPtr = chars + count;
+
+#if defined(ARCH_IA32)
+    /* 32-bit loop, better on IA32 */
+   const u4 lowmask  = ch;
+   const u4 highmask = lowmask << 16;
+
+   const u2* safeEndPtr = endPtr;
+   // Odd number of 16b chars, must not do the last 32b fetch
+   if ( (endPtr - ptr) & 0x1 )
+      safeEndPtr--;
+
+   while ( ptr < safeEndPtr ) {
+      const u4 candidate = *((u4*)ptr);
+
+      if ( ((0x0000ffff & candidate) == lowmask) )
+         return ptr - chars;
+
+      if ( ((0xffff0000 & candidate) == highmask ) )
+         return ptr - chars + 1;
+
+      ptr += 2;
+   }
+
+   if ( ptr < endPtr && *ptr == ch )
+         return ptr - chars;
+#else
+    /* 16-bit loop, slightly better on ARM */
     while (ptr < endPtr) {
         if (*ptr++ == ch)
             return (ptr-1) - chars;
     }
+#endif
+
 #endif
 
     return -1;
@@ -641,6 +669,274 @@ bool javaLangMath_sin(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
 }
 
 /*
+ * public static double acos(double)
+ */
+bool javaLangMath_acos(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = acos(convert.dd);
+    return true;
+}
+
+/*
+ * public static double asin(double)
+ */
+bool javaLangMath_asin(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = asin(convert.dd);
+    return true;
+}
+
+/*
+ * public static double atan(double)
+ */
+bool javaLangMath_atan(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = atan(convert.dd);
+    return true;
+}
+
+/*
+ * public static double atan2(double, double)
+ */
+bool javaLangMath_atan2(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert1, convert2;
+    convert1.arg[0] = arg0;
+    convert1.arg[1] = arg1;
+    convert2.arg[0] = arg2;
+    convert2.arg[1] = arg3;
+    pResult->d = atan2(convert1.dd, convert2.dd);
+    return true;
+}
+
+/*
+ * public static double cbrt(double)
+ */
+bool javaLangMath_cbrt(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = cbrt(convert.dd);
+    return true;
+}
+
+/*
+ * public static double ceil(double)
+ */
+bool javaLangMath_ceil(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = ceil(convert.dd);
+    return true;
+}
+
+/*
+ * public static double cosh(double)
+ */
+bool javaLangMath_cosh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = cosh(convert.dd);
+    return true;
+}
+
+/*
+ * public static double exp(double)
+ */
+bool javaLangMath_exp(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = exp(convert.dd);
+    return true;
+}
+
+/*
+ * public static double expm1(double)
+ */
+bool javaLangMath_expm1(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = expm1(convert.dd);
+    return true;
+}
+
+/*
+ * public static double floor(double)
+ */
+bool javaLangMath_floor(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = floor(convert.dd);
+    return true;
+}
+
+/*
+ * public static double hypot(double, double)
+ */
+bool javaLangMath_hypot(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert1, convert2;
+    convert1.arg[0] = arg0;
+    convert1.arg[1] = arg1;
+    convert2.arg[0] = arg2;
+    convert2.arg[1] = arg3;
+    pResult->d = hypot(convert1.dd, convert2.dd);
+    return true;
+}
+
+/*
+ * public static double log(double)
+ */
+bool javaLangMath_log(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = log(convert.dd);
+    return true;
+}
+
+/*
+ * public static double log10(double)
+ */
+bool javaLangMath_log10(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = log10(convert.dd);
+    return true;
+}
+
+/*
+ * public static double log1p(double)
+ */
+bool javaLangMath_log1p(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = log1p(convert.dd);
+    return true;
+}
+
+/*
+ * public static double nextafter(double, double)
+ */
+bool javaLangMath_nextafter(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert1, convert2;
+    convert1.arg[0] = arg0;
+    convert1.arg[1] = arg1;
+    convert2.arg[0] = arg2;
+    convert2.arg[1] = arg3;
+    pResult->d = nextafter(convert1.dd, convert2.dd);
+    return true;
+}
+
+/*
+ * public static double pow(double)
+ */
+bool javaLangMath_pow(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert1, convert2;
+    convert1.arg[0] = arg0;
+    convert1.arg[1] = arg1;
+    convert2.arg[0] = arg2;
+    convert2.arg[1] = arg3;
+    pResult->d = pow(convert1.dd, convert2.dd);
+    return true;
+}
+
+/*
+ * public static double rint(double)
+ */
+bool javaLangMath_rint(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = rint(convert.dd);
+    return true;
+}
+
+/*
+ * public static double sinh(double)
+ */
+bool javaLangMath_sinh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = sinh(convert.dd);
+    return true;
+}
+
+/*
+ * public static double tan(double)
+ */
+bool javaLangMath_tan(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = tan(convert.dd);
+    return true;
+}
+
+/*
+ * public static double tanh(double)
+ */
+bool javaLangMath_tanh(u4 arg0, u4 arg1, u4 arg2, u4 arg3,
+    JValue* pResult)
+{
+    Convert64 convert;
+    convert.arg[0] = arg0;
+    convert.arg[1] = arg1;
+    pResult->d = tanh(convert.dd);
+    return true;
+}
+
+/*
  * ===========================================================================
  *      java.lang.Float
  * ===========================================================================
@@ -767,6 +1063,27 @@ const InlineOperation gDvmInlineOpsTable[] = {
     { javaLangMath_min_int, "Ljava/lang/StrictMath;", "min", "(II)I" },
     { javaLangMath_max_int, "Ljava/lang/StrictMath;", "max", "(II)I" },
     { javaLangMath_sqrt, "Ljava/lang/StrictMath;", "sqrt", "(D)D" },
+
+    { javaLangMath_acos, "Ljava/lang/Math;", "acos", "(D)D" },
+    { javaLangMath_asin, "Ljava/lang/Math;", "asin", "(D)D" },
+    { javaLangMath_atan, "Ljava/lang/Math;", "atan", "(D)D" },
+    { javaLangMath_atan2, "Ljava/lang/Math;", "atan2", "(DD)D" },
+    { javaLangMath_cbrt, "Ljava/lang/Math;", "cbrt", "(D)D" },
+    { javaLangMath_ceil, "Ljava/lang/Math;", "ceil", "(D)D" },
+    { javaLangMath_cosh, "Ljava/lang/Math;", "cosh", "(D)D" },
+    { javaLangMath_exp, "Ljava/lang/Math;", "exp", "(D)D" },
+    { javaLangMath_expm1, "Ljava/lang/Math;", "expm1", "(D)D" },
+    { javaLangMath_floor, "Ljava/lang/Math;", "floor", "(D)D" },
+    { javaLangMath_hypot, "Ljava/lang/Math;", "hypot", "(DD)D" },
+    { javaLangMath_log, "Ljava/lang/Math;", "log", "(D)D" },
+    { javaLangMath_log10, "Ljava/lang/Math;", "log10", "(D)D" },
+    { javaLangMath_log1p, "Ljava/lang/Math;", "log1p", "(D)D" },
+    { javaLangMath_nextafter, "Ljava/lang/Math;", "nextafter", "(DD)D" },
+    { javaLangMath_pow, "Ljava/lang/Math;", "pow", "(DD)D" },
+    { javaLangMath_rint, "Ljava/lang/Math;", "rint", "(D)D" },
+    { javaLangMath_sinh, "Ljava/lang/Math;", "sinh", "(D)D" },
+    { javaLangMath_tan, "Ljava/lang/Math;", "tan", "(D)D" },
+    { javaLangMath_tanh, "Ljava/lang/Math;", "tanh", "(D)D" },
 };
 
 /*

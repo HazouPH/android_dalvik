@@ -23,8 +23,19 @@
 
 struct HeapSource;
 
+typedef struct HeapSource HeapSource;
+
+#ifdef WITH_TLA
+typedef struct TLHeapSource TLHeapSource;
+#endif
+
+
 struct GcHeap {
     HeapSource *heapSource;
+
+#ifdef WITH_TLA
+    TLHeapSource* tlhSource;
+#endif
 
     /* Linked lists of subclass instances of java/lang/ref/Reference
      * that we find while recursing.  The "next" pointers are hidden
@@ -51,9 +62,14 @@ struct GcHeap {
     size_t cardTableMaxLength;
     size_t cardTableOffset;
 
-    /* Is the GC running?  Used to avoid recursive calls to GC.
-     */
+    /* Is the GC running?  Used to avoid recursive calls to GC. */
     bool gcRunning;
+
+    /* Major collection trigger */
+    bool forceMajorGC;
+
+    /* Number of consecutive Partial GC */
+    size_t mumConsecutivePartialGC;
 
     /*
      * Debug control values
@@ -63,10 +79,17 @@ struct GcHeap {
     int ddmHpsgWhat;
     int ddmNhsgWhen;
     int ddmNhsgWhat;
+
 };
 
+/** Lock the global Heap mutex. */
 bool dvmLockHeap(void);
+
+/** Unlock the global Heap mutex. */
 void dvmUnlockHeap(void);
+
+/** Lock the global Heap mutex, but try to spin first. */
+bool dvmSpinAndLockHeap(void);
 
 /*
  * Logging helpers

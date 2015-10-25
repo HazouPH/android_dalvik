@@ -254,6 +254,7 @@ bool dvmEncodedArrayIteratorHasNext(const EncodedArrayIterator* iterator);
  * The caller must call dvmReleaseTrackedAlloc() on any returned reference.
  *
  * @param value pointer to store decoded value into
+ * @param iterator the iterator
  * @returns true if a value was decoded and the cursor advanced; false if
  * the last value had already been decoded or if there was a problem decoding
  */
